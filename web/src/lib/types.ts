@@ -27,6 +27,7 @@ export interface RateLimitInfo {
   limit: number
   remaining: number
   resetAt: number // ms epoch
+  resource: 'rest' | 'graphql'
 }
 
 export interface PullRequestInfo {
