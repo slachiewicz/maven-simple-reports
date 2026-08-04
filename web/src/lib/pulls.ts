@@ -23,7 +23,7 @@ import {
 import { MAVEN_OWNER } from './repos'
 import { readArchived, writeArchived, writeResult } from './cache'
 import { classifyAuthor } from './authors'
-import type { BuildState, PullRequestInfo, RepoFetchResult } from './types'
+import type { BuildState, PullRequestInfo, PrResult } from './types'
 
 interface RepoMetadata {
   archived: boolean

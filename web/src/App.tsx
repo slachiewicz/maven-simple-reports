@@ -41,7 +41,7 @@ import {
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
 import type { AuthorFilter } from './lib/authors'
-import type { RateLimitInfo as RL, RepoFetchResult } from './lib/types'
+import type { RateLimitInfo as RL, PrResult } from './lib/types'
 import { type CycleState, useSweep } from './lib/useSweep'
 import { PrTable } from './components/PrTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
@@ -133,7 +133,7 @@ export function App() {
 
   const authenticated = !!oauth || !!token
 
-  const sweep = useSweep<RepoFetchResult>({
+  const sweep = useSweep<PrResult>({
     items: activeRepos,
     fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
     getToken: acquireToken,
@@ -183,7 +183,7 @@ export function App() {
   })
 
   const enrichedResults = useMemo(() => {
-    const out: Record<string, RepoFetchResult> = {}
+    const out: Record<string, PrResult> = {}
     for (const [repo, result] of Object.entries(sweep.results)) {
       out[repo] = {
         ...result,
@@ -339,7 +339,7 @@ function CycleStatus({
   fetched,
   total,
 }: {
-  cycle: import('./lib/useSweep').CycleState
+  cycle: CycleState
   fetched: number
   total: number
 }) {

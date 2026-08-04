@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react'
-import type { PullRequestInfo, RepoFetchResult } from '../lib/types'
+import type { PullRequestInfo, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
