@@ -86,6 +86,7 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const syncPending = () => setPending([...pendingRef.current])
 
   const wake = () => {
+    clearQueueBackoff()
     restartTokenRef.current += 1
   }
 
