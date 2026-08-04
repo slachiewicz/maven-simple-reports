@@ -39,7 +39,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
 ## Requirements
 
-- **Node.js 20+** and npm (for the SPA build)
+- **Node.js 22+** and npm (for the SPA build)
 - **Ruby** and the `asciidoctor` gem (for AsciiDoc → HTML conversion)
   ```bash
   gem install asciidoctor
