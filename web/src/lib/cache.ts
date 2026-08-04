@@ -24,6 +24,8 @@ const TOKEN_PERSIST_KEY = 'gh-token-persist:v1'
 const HIDE_EMPTY_KEY = 'gh-hide-empty:v1'
 const OAUTH_KEY = 'gh-oauth:v1'
 const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
+const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
+const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
 
 const ARCHIVED_TTL_MS = 7 * 24 * 60 * 60_000
 
@@ -99,6 +101,8 @@ export function clearAllCache(): number {
         k &&
         (k.startsWith(RESULT_PREFIX) ||
           k.startsWith(ARCHIVED_PREFIX) ||
+          k.startsWith(BRANCH_RESULT_PREFIX) ||
+          k.startsWith(DEFAULT_BRANCH_PREFIX) ||
           LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))
       ) {
         lsKeys.push(k)
@@ -313,6 +317,62 @@ export function readAllResults<T>(): Record<string, T> {
       if (!raw) continue
       try {
         out[k.slice(RESULT_PREFIX.length)] = JSON.parse(raw) as T
+      } catch {
+        // skip malformed entries
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out
+}
+
+interface DefaultBranchEntry {
+  name: string
+  checkedAt: number
+}
+
+// The default branch name rarely changes, so cache it for the same 7-day TTL
+// used for archived-repo status rather than re-querying it on every fetch.
+export function readDefaultBranch(repo: string): string | null {
+  try {
+    const raw = localStorage.getItem(DEFAULT_BRANCH_PREFIX + repo)
+    if (!raw) return null
+    const entry = JSON.parse(raw) as DefaultBranchEntry
+    if (Date.now() - entry.checkedAt > ARCHIVED_TTL_MS) return null
+    return entry.name
+  } catch {
+    return null
+  }
+}
+
+export function writeDefaultBranch(repo: string, name: string): void {
+  try {
+    const entry: DefaultBranchEntry = { name, checkedAt: Date.now() }
+    localStorage.setItem(DEFAULT_BRANCH_PREFIX + repo, JSON.stringify(entry))
+  } catch {
+    // ignore
+  }
+}
+
+export function writeBranchResult<T>(repo: string, value: T): void {
+  try {
+    localStorage.setItem(BRANCH_RESULT_PREFIX + repo, JSON.stringify(value))
+  } catch {
+    // ignore
+  }
+}
+
+export function readAllBranchResults<T>(): Record<string, T> {
+  const out: Record<string, T> = {}
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k || !k.startsWith(BRANCH_RESULT_PREFIX)) continue
+      const raw = localStorage.getItem(k)
+      if (!raw) continue
+      try {
+        out[k.slice(BRANCH_RESULT_PREFIX.length)] = JSON.parse(raw) as T
       } catch {
         // skip malformed entries
       }
