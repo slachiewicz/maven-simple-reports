@@ -16,8 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRepoPrs } from './lib/dependabot'
-import { clearQueueBackoff, subscribeRateLimit } from './lib/githubFetch'
-import { useSweep } from './lib/useSweep'
+import { subscribeRateLimit } from './lib/githubFetch'
 import {
   migrateLegacyCache,
   readAllResults,
@@ -39,7 +38,8 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
-import type { RateLimitInfo as RL, PrResult } from './lib/types'
+import type { RateLimitInfo as RL, RepoFetchResult } from './lib/types'
+import { type CycleState, useSweep } from './lib/useSweep'
 import { PrTable } from './components/PrTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
@@ -72,11 +72,6 @@ export function App() {
   )
   const [oauthError, setOauthError] = useState<string | null>(null)
 
-  const [rl, setRl] = useState<RL | null>(null)
-
-  const tokenRef = useRef<string>(token)
-  const oauthRef = useRef<StoredOauthTokens | null>(oauth)
-
   // Hydrate from any prior tab's persisted results so a freshly opened tab
   // shows data instantly (even before its own fetch completes). Also run the
   // one-time migration that evicts the legacy ETag cache from localStorage so
@@ -89,6 +84,18 @@ export function App() {
     )
     return hydrated
   }, [])
+  const [rl, setRl] = useState<RL | null>(null)
+
+  const tokenRef = useRef<string>(token)
+  const oauthRef = useRef<StoredOauthTokens | null>(oauth)
+
+  useEffect(() => {
+    tokenRef.current = token
+  }, [token])
+
+  useEffect(() => {
+    oauthRef.current = oauth
+  }, [oauth])
 
   const filterResult = useMemo(() => applyFilter(filter), [filter])
   const activeRepos = filterResult.repos
@@ -122,7 +129,7 @@ export function App() {
 
   const authenticated = !!oauth || !!token
 
-  const sweep = useSweep<PrResult>({
+  const sweep = useSweep<RepoFetchResult>({
     items: activeRepos,
     fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
     getToken: acquireToken,
@@ -139,7 +146,6 @@ export function App() {
     tokenRef.current = next
     // Lift any pending anonymous-quota backoff and wake the cycle so the
     // higher (or lower, on clear) limit takes effect immediately.
-    clearQueueBackoff()
     sweep.wake()
   }
 
@@ -149,7 +155,6 @@ export function App() {
     setOauth(next)
     writeOauth(next, tokenPersist)
     oauthRef.current = next
-    clearQueueBackoff()
     sweep.wake()
   }
 

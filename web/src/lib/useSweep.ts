@@ -105,7 +105,7 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
 
   // Item-set changes queue only what is not already fetched, matching the
   // filter-change behaviour the previous App.tsx had at lines 200-217.
-  const itemsKey = opts.items.join('\0')
+  const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
     const fetched = new Set(Object.keys(resultsRef.current))
