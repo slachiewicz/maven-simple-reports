@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRepoPrs } from './lib/dependabot'
 import { clearQueueBackoff, subscribeRateLimit } from './lib/githubFetch'
 import { useSweep } from './lib/useSweep'
+
 import {
   migrateLegacyCache,
   readAllResults,
@@ -40,10 +41,13 @@ import {
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
 import type { RateLimitInfo as RL, PrResult } from './lib/types'
+import { type AuthorFilter, matchesAuthorFilter } from './lib/authors'
 import { PrTable } from './components/PrTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
 import { TokenInput } from './components/TokenInput'
+
+type Tab = 'prs' | 'branches'
 
 // 30 min between full cycles when unauthenticated (60/h budget); 5 min when a PAT
 // is configured (5 000/h budget). The interval is read at the start of each
@@ -64,6 +68,7 @@ function applyFilter(pattern: string): { repos: string[]; invalid: boolean } {
 }
 
 export function App() {
+  const [tab, setTab] = useState<Tab>('prs')
   const [filter, setFilter] = useState<string>(() => readFilter())
   const [token, setToken] = useState<string>(() => readToken())
   const [tokenPersist, setTokenPersist] = useState<boolean>(() => readTokenPersist())
@@ -71,6 +76,7 @@ export function App() {
     readOauth<StoredOauthTokens>(),
   )
   const [oauthError, setOauthError] = useState<string | null>(null)
+  const [authorFilter, setAuthorFilter] = useState<AuthorFilter>('all')
 
   const [rl, setRl] = useState<RL | null>(null)
 
@@ -127,7 +133,7 @@ export function App() {
     fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
     getToken: acquireToken,
     intervalMs: authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS,
-    enabled: true,
+    enabled: tab === 'prs',
     initialResults: hydratedResults,
   })
 
@@ -183,8 +189,16 @@ export function App() {
 
   const visibleResults = useMemo(() => {
     const active = new Set(activeRepos)
-    return Object.values(sweep.results).filter((r) => active.has(r.repo))
-  }, [sweep.results, activeRepos])
+    return Object.values(sweep.results)
+      .filter((r) => active.has(r.repo))
+      .map((result) => ({
+        ...result,
+        prs: result.prs.filter((pr) =>
+          matchesAuthorFilter(pr.authorClass, authorFilter),
+        ),
+      }))
+      .filter((r) => r.prs.length > 0)
+  }, [sweep.results, activeRepos, authorFilter])
   const totalPrs = useMemo(
     () => visibleResults.reduce((n, r) => n + r.prs.length, 0),
     [visibleResults],
@@ -195,10 +209,36 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>Open Maven Dependabot PRs</h1>
+        <h1>
+          {tab === 'prs'
+            ? authorFilter === 'dependabot'
+              ? 'Open Maven Dependabot PRs'
+              : authorFilter === 'humans'
+                ? 'Open Maven PRs (Humans)'
+                : 'Open Maven PRs (All)'
+            : 'Maven Branch Dashboard'}
+        </h1>
         <p className="subtitle">
-          Live view across {MAVEN_REPOS.length} <code>apache/maven-*</code> repositories.
+          {tab === 'prs'
+            ? 'Live view across '
+            : 'Branch status across '} {MAVEN_REPOS.length} <code>apache/maven-*</code> repositories.
         </p>
+        <nav className="tabs">
+          <button
+            type="button"
+            className={tab === 'prs' ? 'active' : ''}
+            onClick={() => setTab('prs')}
+          >
+            PRs
+          </button>
+          <button
+            type="button"
+            className={tab === 'branches' ? 'active' : ''}
+            onClick={() => setTab('branches')}
+          >
+            Branches
+          </button>
+        </nav>
       </header>
 
       <TokenInput
@@ -220,14 +260,29 @@ export function App() {
         invalid={filterInvalid}
       />
 
+      {tab === 'prs' && (
+        <section className="meta">
+          <span className="muted">Author filter:</span>
+          <select
+            value={authorFilter}
+            onChange={(e) => setAuthorFilter(e.target.value as AuthorFilter)}
+            aria-label="Filter PRs by author type"
+          >
+            <option value="dependabot">Dependabot only</option>
+            <option value="humans">Humans only</option>
+            <option value="all">All PRs</option>
+          </select>
+        </section>
+      )}
+
       <section className="meta">
         <RateLimitInfo rl={rl} />
         <span className="meta-sep">·</span>
         <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
         <span className="meta-sep">·</span>
         <span className="muted">
-          {totalPrs} open Dependabot PR{totalPrs === 1 ? '' : 's'} across{' '}
-          {visibleResults.filter((r) => r.prs.length > 0).length} repos
+          {totalPrs} open PR{totalPrs === 1 ? '' : 's'} across{' '}
+          {visibleResults.length} repos
         </span>
         <span className="meta-sep grow">·</span>
         <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">

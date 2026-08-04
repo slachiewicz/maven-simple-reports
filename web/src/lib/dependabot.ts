@@ -23,35 +23,27 @@ import {
 import { MAVEN_OWNER } from './repos'
 import { readArchived, writeArchived, writeResult } from './cache'
 import { classifyAuthor } from './authors'
-import type { PrRow, PrResult } from './types'
+import type { PullRequestInfo, PrResult } from './types'
+
+interface RestPullRequest {
+  number: number
+  title: string
+  user: { login: string | null; type: string | null } | null
+  created_at: string
+  updated_at: string
+  draft: boolean
+  base: { ref: string }
+  head: { sha: string }
+  html_url: string
+}
 
 interface RepoMetadata {
   archived: boolean
 }
 
-interface RestPullRequest {
-  number: number
-  title: string
-  user: { login: string; type: string } | null
-  created_at: string
-  updated_at: string
-  draft: boolean
-  html_url: string
-  head: { sha: string }
-  base: { ref: string }
-}
-
-const DEPENDABOT_LOGIN_PATTERNS = [/^dependabot(\[bot\])?$/i, /^app\/dependabot$/i]
-
-function isDependabotAuthor(login: string | undefined | null): boolean {
-  if (!login) return false
-  return DEPENDABOT_LOGIN_PATTERNS.some((re) => re.test(login))
-}
-
 export interface FetchRepoOptions {
   token?: string | null
   spaceBeforeMs?: number
-  /** Skip fetching check-runs for each PR (faster but no build status). */
   skipChecks?: boolean
 }
 
@@ -89,17 +81,17 @@ const result: PrResult = {
       { token: opts.token, spaceBeforeMs: cachedArchived ? opts.spaceBeforeMs : 0 },
     )
 
-    const dependabotPulls = list.data.filter((p) => isDependabotAuthor(p.user?.login))
+    const pulls = list.data
 
-    const prs: PrRow[] = []
-    for (const pr of dependabotPulls) {
+    const prs: PullRequestInfo[] = []
+    for (const pr of pulls) {
       const baseUrl = `https://github.com/${MAVEN_OWNER}/${repo}`
-      const pull: PrRow = {
+      const pull: PullRequestInfo = {
         repo,
         number: pr.number,
         title: pr.title,
         author: pr.user?.login ?? 'unknown',
-        authorType: classifyAuthor(pr.user?.login ?? null, pr.user?.type ?? null),
+        authorClass: classifyAuthor(pr.user?.login, pr.user?.type),
         createdAt: pr.created_at,
         updatedAt: pr.updated_at,
         isDraft: pr.draft,

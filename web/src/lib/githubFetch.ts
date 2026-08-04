@@ -98,6 +98,7 @@ function parseRateLimit(headers: Headers): RateLimitInfo | null {
     limit: Number(limit),
     remaining: Number(remaining),
     resetAt: Number(reset) * 1000,
+    resource: 'rest',
   }
 }
 

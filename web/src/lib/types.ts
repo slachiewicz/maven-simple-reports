@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { AuthorClass } from './authors'
+
 export type BuildState =
   | 'SUCCESS'
   | 'FAILURE'
@@ -25,14 +27,15 @@ export interface RateLimitInfo {
   limit: number
   remaining: number
   resetAt: number // ms epoch
+  resource: 'rest' | 'graphql'
 }
 
-export interface PrRow {
+export interface PullRequestInfo {
   repo: string
   number: number
   title: string
   author: string
-  authorType: string | null
+  authorClass: AuthorClass
   createdAt: string
   updatedAt: string
   isDraft: boolean
@@ -46,7 +49,7 @@ export interface PrRow {
 
 export interface PrResult {
   repo: string
-  prs: PrRow[]
+  prs: PullRequestInfo[]
   fetchedAt: number
   fromCache: boolean
   error?: string
