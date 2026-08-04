@@ -57,13 +57,14 @@ export interface SweepResult<T> {
 
 export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const [results, setResults] = useState<Record<string, T>>(() => opts.initialResults ?? {})
-  const [pending, setPending] = useState<string[]>([])
+  const [pending, setPending] = useState<string[]>([...opts.items])
   const [cycle, setCycle] = useState<CycleState>(initialCycle)
 
-  const pendingRef = useRef<string[]>([])
+  const pendingRef = useRef<string[]>([...opts.items])
   const itemsRef = useRef<readonly string[]>(opts.items)
   const resultsRef = useRef<Record<string, T>>(results)
   const restartTokenRef = useRef(0)
+  const didMountRef = useRef(false)
 
   // Latest-value refs so the loop below can keep empty deps. The loop must be
   // started exactly once; re-running the effect would abandon an in-flight
@@ -109,6 +110,13 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
+    // Mount: pendingRef is already seeded with every item, matching the old
+    // loop, which always re-verified all repos on load (ETag 304s are cheap).
+    // Only a genuine post-mount item-set change filters against results.
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
     const fetched = new Set(Object.keys(resultsRef.current))
     pendingRef.current = opts.items.filter((i) => !fetched.has(i))
     restartTokenRef.current += 1
