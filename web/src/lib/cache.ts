@@ -15,7 +15,8 @@
  */
 
 const PREFIX = 'gh-cache:v1:'
-const RESULT_PREFIX = 'gh-result:v1:'
+const RESULT_PREFIX = 'gh-result:v2:'
+const LEGACY_RESULT_PREFIXES = ['gh-result:v1:']
 const ARCHIVED_PREFIX = 'gh-archived:v1:'
 const FILTER_KEY = 'gh-filter:v1'
 const TOKEN_KEY = 'gh-token:v1'
@@ -93,7 +94,12 @@ export function clearAllCache(): number {
     const lsKeys: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (k && (k.startsWith(RESULT_PREFIX) || k.startsWith(ARCHIVED_PREFIX))) {
+      if (
+        k &&
+        (k.startsWith(RESULT_PREFIX) ||
+          k.startsWith(ARCHIVED_PREFIX) ||
+          LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))
+      ) {
         lsKeys.push(k)
       }
     }

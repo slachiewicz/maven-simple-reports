@@ -23,7 +23,7 @@ import {
 import { MAVEN_OWNER } from './repos'
 import { readArchived, writeArchived, writeResult } from './cache'
 import { classifyAuthor } from './authors'
-import type { PrRow, PrResult } from './types'
+import type { PullRequestInfo, RepoFetchResult } from './types'
 
 interface RepoMetadata {
   archived: boolean
@@ -39,13 +39,6 @@ interface RestPullRequest {
   html_url: string
   head: { sha: string }
   base: { ref: string }
-}
-
-const DEPENDABOT_LOGIN_PATTERNS = [/^dependabot(\[bot\])?$/i, /^app\/dependabot$/i]
-
-function isDependabotAuthor(login: string | undefined | null): boolean {
-  if (!login) return false
-  return DEPENDABOT_LOGIN_PATTERNS.some((re) => re.test(login))
 }
 
 export interface FetchRepoOptions {
@@ -89,17 +82,17 @@ const result: PrResult = {
       { token: opts.token, spaceBeforeMs: cachedArchived ? opts.spaceBeforeMs : 0 },
     )
 
-    const dependabotPulls = list.data.filter((p) => isDependabotAuthor(p.user?.login))
+    const pulls = list.data
 
-    const prs: PrRow[] = []
-    for (const pr of dependabotPulls) {
+    const prs: PullRequestInfo[] = []
+    for (const pr of pulls) {
       const baseUrl = `https://github.com/${MAVEN_OWNER}/${repo}`
-      const pull: PrRow = {
+      const pull: PullRequestInfo = {
         repo,
         number: pr.number,
         title: pr.title,
         author: pr.user?.login ?? 'unknown',
-        authorType: classifyAuthor(pr.user?.login ?? null, pr.user?.type ?? null),
+        authorClass: classifyAuthor(pr.user?.login, pr.user?.type),
         createdAt: pr.created_at,
         updatedAt: pr.updated_at,
         isDraft: pr.draft,

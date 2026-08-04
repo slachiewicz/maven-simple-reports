@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react'
-import type { PrRow, PrResult } from '../lib/types'
+import type { PullRequestInfo, RepoFetchResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { StatusBadge } from './StatusBadge'
@@ -53,7 +53,7 @@ interface BuildCounts {
   unknown: number
 }
 
-function countBuildStates(prs: PrRow[]): BuildCounts {
+function countBuildStates(prs: PullRequestInfo[]): BuildCounts {
   const c: BuildCounts = { success: 0, failure: 0, pending: 0, unknown: 0 }
   for (const pr of prs) {
     switch (pr.buildState) {
@@ -259,7 +259,7 @@ function RepoMeta({ result, isInFlight, counts, prCount }: RepoMetaProps) {
   )
 }
 
-function PrRow({ pr }: { pr: PrRow }) {
+function PrRow({ pr }: { pr: PullRequestInfo }) {
   return (
     <tr className="pr-row">
       <td className="pr-indent">

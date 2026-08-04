@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchRepoPrs } from './lib/dependabot'
+import { fetchRepoPrs } from './lib/pulls'
 import { subscribeRateLimit } from './lib/githubFetch'
 import {
   migrateLegacyCache,
