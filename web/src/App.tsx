@@ -15,17 +15,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchPrBuildState, fetchRepoPrs, prBuildKey, type PrBuildResult } from './lib/pulls'
 import { subscribeRateLimit } from './lib/githubFetch'
 import {
-  migrateLegacyCache,
-  readAllResults,
-  readAuthorFilter,
   readFilter,
   readOauth,
   readToken,
   readTokenPersist,
-  writeAuthorFilter,
   writeFilter,
   writeOauth,
   writeToken,
@@ -40,21 +35,19 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
-import type { AuthorFilter } from './lib/authors'
-import type { RateLimitInfo as RL, PrResult } from './lib/types'
-import { type CycleState, useSweep } from './lib/useSweep'
-import { PrTable } from './components/PrTable'
+import type { RateLimitInfo as RL } from './lib/types'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
 import { TokenInput } from './components/TokenInput'
-import { AuthorFilterControl } from './components/AuthorFilter'
+import { PullRequestsView } from './views/PullRequestsView'
+import { BranchesView } from './views/BranchesView'
 
-// 30 min between full cycles when unauthenticated (60/h budget); 5 min when a PAT
-// is configured (5 000/h budget). The interval is read at the start of each
-// sleep, so toggling the token takes effect on the next cycle.
-const CYCLE_INTERVAL_ANON_MS = 30 * 60_000
-const CYCLE_INTERVAL_AUTH_MS = 5 * 60_000
-const PER_REPO_SPACING_MS = 800
+export type ViewKey = 'prs' | 'branches'
+
+function readViewFromUrl(): ViewKey {
+  const raw = new URLSearchParams(window.location.search).get('view')
+  return raw === 'branches' ? 'branches' : 'prs'
+}
 
 function applyFilter(pattern: string): { repos: string[]; invalid: boolean } {
   const trimmed = pattern.trim()
@@ -75,20 +68,8 @@ export function App() {
     readOauth<StoredOauthTokens>(),
   )
   const [oauthError, setOauthError] = useState<string | null>(null)
-
-  // Hydrate from any prior tab's persisted results so a freshly opened tab
-  // shows data instantly (even before its own fetch completes). Also run the
-  // one-time migration that evicts the legacy ETag cache from localStorage so
-  // persisted results have the full 5 MB budget.
-  const hydratedResults = useMemo(() => {
-    const removed = migrateLegacyCache()
-    const hydrated = readAllResults<PrResult>()
-    console.log(
-      `[cache] migration removed ${removed} legacy ETag entries from localStorage; hydrated ${Object.keys(hydrated).length} repos from persisted results`,
-    )
-    return hydrated
-  }, [])
   const [rl, setRl] = useState<RL | null>(null)
+  const [view, setViewState] = useState<ViewKey>(() => readViewFromUrl())
 
   const tokenRef = useRef<string>(token)
   const oauthRef = useRef<StoredOauthTokens | null>(oauth)
@@ -106,6 +87,22 @@ export function App() {
   const filterInvalid = filterResult.invalid
 
   useEffect(() => subscribeRateLimit(setRl), [])
+
+  const setView = (next: ViewKey) => {
+    setViewState(next)
+    const url = new URL(window.location.href)
+    if (next === 'prs') url.searchParams.delete('view')
+    else url.searchParams.set('view', next)
+    window.history.replaceState(null, '', url)
+  }
+
+  // Back/forward must move between tabs, not silently leave the URL and the
+  // rendered view disagreeing.
+  useEffect(() => {
+    const onPop = () => setViewState(readViewFromUrl())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   const acquireToken = useCallback(async (): Promise<string | undefined> => {
     const current = oauthRef.current
@@ -133,81 +130,12 @@ export function App() {
 
   const authenticated = !!oauth || !!token
 
-  const sweep = useSweep<PrResult>({
-    items: activeRepos,
-    fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
-    getToken: acquireToken,
-    intervalMs: authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS,
-    enabled: true,
-    initialResults: hydratedResults,
-  })
-
-  const allPrs = useMemo(
-    () => Object.values(sweep.results).flatMap((r) => r.prs),
-    [sweep.results],
-  )
-
-  const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
-
-  const setAuthorFilter = (next: AuthorFilter) => {
-    setAuthorFilterState(next)
-    writeAuthorFilter(next)
-  }
-
-  const authorCounts = useMemo(() => {
-    const counts: Record<AuthorFilter, number> = { all: 0, dependabot: 0, humans: 0 }
-    for (const pr of allPrs) {
-      counts.all++
-      if (pr.authorClass === 'dependabot') counts.dependabot++
-      else if (pr.authorClass === 'human') counts.humans++
-    }
-    return counts
-  }, [allPrs])
-
-  // Newest first: a reviewer cares about recent PRs, and an anonymous visitor
-  // will only get through the first few dozen before the 60/h budget runs out.
-  const buildKeys = useMemo(
-    () =>
-      [...allPrs]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .map(prBuildKey),
-    [allPrs],
-  )
-
-  const buildSweep = useSweep<PrBuildResult>({
-    items: buildKeys,
-    fetchOne: fetchPrBuildState,
-    getToken: acquireToken,
-    intervalMs: authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS,
-    enabled: true,
-  })
-
-  const enrichedResults = useMemo(() => {
-    const out: Record<string, PrResult> = {}
-    for (const [repo, result] of Object.entries(sweep.results)) {
-      out[repo] = {
-        ...result,
-        prs: result.prs.map((pr) => {
-          const build = buildSweep.results[prBuildKey(pr)]
-          return build
-            ? { ...pr, buildState: build.state, buildStateFetchedAt: build.fetchedAt }
-            : pr
-        }),
-      }
-    }
-    return out
-  }, [sweep.results, buildSweep.results])
-
   const updateToken = (next: string, persist: boolean) => {
     setToken(next)
     setTokenPersist(persist)
     writeToken(next, persist)
     writeTokenPersist(persist)
     tokenRef.current = next
-    // Lift any pending anonymous-quota backoff and wake both sweeps so the
-    // higher (or lower, on clear) limit takes effect immediately.
-    sweep.wake()
-    buildSweep.wake()
   }
 
   const clearTokenAction = () => updateToken('', tokenPersist)
@@ -216,8 +144,6 @@ export function App() {
     setOauth(next)
     writeOauth(next, tokenPersist)
     oauthRef.current = next
-    sweep.wake()
-    buildSweep.wake()
   }
 
   const connectOauth = () => {
@@ -248,19 +174,13 @@ export function App() {
     writeFilter(next)
   }
 
-  const visibleResults = useMemo(() => {
-    const active = new Set(activeRepos)
-    return Object.values(sweep.results).filter((r) => active.has(r.repo))
-  }, [sweep.results, activeRepos])
-  const remaining = sweep.pending.length
-  const fetched = Math.max(0, activeRepos.length - remaining)
-
   return (
     <div className="app">
       <header>
-        <h1>Open Maven Pull Requests</h1>
+        <h1>Open Maven Pull Requests &amp; Branches</h1>
         <p className="subtitle">
-          Live view across {MAVEN_REPOS.length} <code>apache/maven-*</code> repositories.
+          Live view of pull requests and branches across {MAVEN_REPOS.length}{' '}
+          <code>apache/maven-*</code> repositories.
         </p>
       </header>
 
@@ -285,34 +205,43 @@ export function App() {
 
       <section className="meta">
         <RateLimitInfo rl={rl} />
-        <span className="meta-sep">·</span>
-        <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
-        <span className="meta-sep">·</span>
-        <span className="muted">
-          {authorCounts[authorFilter]} open PR{authorCounts[authorFilter] === 1 ? '' : 's'} across{' '}
-          {visibleResults.filter((r) => r.prs.length > 0).length} repos
-        </span>
-        <span className="meta-sep">·</span>
-        <span className="muted">
-          {buildSweep.pending.length > 0
-            ? `build status: ${buildKeys.length - buildSweep.pending.length}/${buildKeys.length}`
-            : `build status: ${buildKeys.length} PRs`}
-        </span>
-        <span className="meta-sep grow">·</span>
-        <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
-          Refresh now
-        </button>
       </section>
 
-      <AuthorFilterControl value={authorFilter} onChange={setAuthorFilter} counts={authorCounts} />
+      <nav className="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'prs'}
+          className={`tab-btn${view === 'prs' ? ' tab-btn-active' : ''}`}
+          onClick={() => setView('prs')}
+        >
+          Pull requests
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'branches'}
+          className={`tab-btn${view === 'branches' ? ' tab-btn-active' : ''}`}
+          onClick={() => setView('branches')}
+        >
+          Branches
+        </button>
+      </nav>
 
       <main>
-        <PrTable
-          allRepos={activeRepos}
-          results={enrichedResults}
-          inFlight={sweep.cycle.inFlight}
-          authorFilter={authorFilter}
-        />
+        {view === 'prs' ? (
+          <PullRequestsView
+            activeRepos={activeRepos}
+            getToken={acquireToken}
+            authenticated={authenticated}
+          />
+        ) : (
+          <BranchesView
+            activeRepos={activeRepos}
+            getToken={acquireToken}
+            hasToken={authenticated}
+          />
+        )}
       </main>
 
       <footer className="muted">
@@ -332,62 +261,4 @@ export function App() {
       </footer>
     </div>
   )
-}
-
-function CycleStatus({
-  cycle,
-  fetched,
-  total,
-}: {
-  cycle: CycleState
-  fetched: number
-  total: number
-}) {
-  if (cycle.pausedUntil) {
-    return (
-      <span className="cycle warn">
-        Paused (rate-limited) · resumes at {formatTime(cycle.pausedUntil)} ({formatRelative(cycle.pausedUntil)})
-      </span>
-    )
-  }
-  if (cycle.inFlight) {
-    return (
-      <span className="cycle">
-        Fetching {cycle.inFlight}… ({fetched}/{total})
-      </span>
-    )
-  }
-  if (cycle.nextCycleAt) {
-    return (
-      <span className="cycle">
-        Updated at {formatTime(cycle.completedAt ?? Date.now())} · next refresh at {formatTime(cycle.nextCycleAt)}
-      </span>
-    )
-  }
-  if (cycle.startedAt) {
-    return (
-      <span className="cycle">
-        Loading… ({fetched}/{total})
-      </span>
-    )
-  }
-  return <span className="cycle muted">Idle</span>
-}
-
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  })
-}
-
-function formatRelative(targetMs: number): string {
-  const diffMs = targetMs - Date.now()
-  if (diffMs <= 0) return 'now'
-  const mins = Math.ceil(diffMs / 60_000)
-  if (mins < 60) return `in ${mins} min`
-  const hours = Math.floor(mins / 60)
-  const remMins = mins % 60
-  return remMins ? `in ${hours} h ${remMins} min` : `in ${hours} h`
 }
