@@ -20,10 +20,12 @@ import { subscribeRateLimit } from './lib/githubFetch'
 import {
   migrateLegacyCache,
   readAllResults,
+  readAuthorFilter,
   readFilter,
   readOauth,
   readToken,
   readTokenPersist,
+  writeAuthorFilter,
   writeFilter,
   writeOauth,
   writeToken,
@@ -38,12 +40,14 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
+import type { AuthorFilter } from './lib/authors'
 import type { RateLimitInfo as RL, RepoFetchResult } from './lib/types'
 import { type CycleState, useSweep } from './lib/useSweep'
 import { PrTable } from './components/PrTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
 import { TokenInput } from './components/TokenInput'
+import { AuthorFilterControl } from './components/AuthorFilter'
 
 // 30 min between full cycles when unauthenticated (60/h budget); 5 min when a PAT
 // is configured (5 000/h budget). The interval is read at the start of each
@@ -143,6 +147,23 @@ export function App() {
     [sweep.results],
   )
 
+  const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
+
+  const setAuthorFilter = (next: AuthorFilter) => {
+    setAuthorFilterState(next)
+    writeAuthorFilter(next)
+  }
+
+  const authorCounts = useMemo(() => {
+    const counts: Record<AuthorFilter, number> = { all: 0, dependabot: 0, humans: 0 }
+    for (const pr of allPrs) {
+      counts.all++
+      if (pr.authorClass === 'dependabot') counts.dependabot++
+      else if (pr.authorClass === 'human') counts.humans++
+    }
+    return counts
+  }, [allPrs])
+
   // Newest first: a reviewer cares about recent PRs, and an anonymous visitor
   // will only get through the first few dozen before the 60/h budget runs out.
   const buildKeys = useMemo(
@@ -231,17 +252,13 @@ export function App() {
     const active = new Set(activeRepos)
     return Object.values(sweep.results).filter((r) => active.has(r.repo))
   }, [sweep.results, activeRepos])
-  const totalPrs = useMemo(
-    () => visibleResults.reduce((n, r) => n + r.prs.length, 0),
-    [visibleResults],
-  )
   const remaining = sweep.pending.length
   const fetched = Math.max(0, activeRepos.length - remaining)
 
   return (
     <div className="app">
       <header>
-        <h1>Open Maven Dependabot PRs</h1>
+        <h1>Open Maven Pull Requests</h1>
         <p className="subtitle">
           Live view across {MAVEN_REPOS.length} <code>apache/maven-*</code> repositories.
         </p>
@@ -272,7 +289,7 @@ export function App() {
         <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
         <span className="meta-sep">·</span>
         <span className="muted">
-          {totalPrs} open Dependabot PR{totalPrs === 1 ? '' : 's'} across{' '}
+          {authorCounts[authorFilter]} open PR{authorCounts[authorFilter] === 1 ? '' : 's'} across{' '}
           {visibleResults.filter((r) => r.prs.length > 0).length} repos
         </span>
         <span className="meta-sep">·</span>
@@ -287,8 +304,15 @@ export function App() {
         </button>
       </section>
 
+      <AuthorFilterControl value={authorFilter} onChange={setAuthorFilter} counts={authorCounts} />
+
       <main>
-        <PrTable allRepos={activeRepos} results={enrichedResults} inFlight={sweep.cycle.inFlight} />
+        <PrTable
+          allRepos={activeRepos}
+          results={enrichedResults}
+          inFlight={sweep.cycle.inFlight}
+          authorFilter={authorFilter}
+        />
       </main>
 
       <footer className="muted">

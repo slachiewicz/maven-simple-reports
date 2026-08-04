@@ -23,6 +23,7 @@ const TOKEN_KEY = 'gh-token:v1'
 const TOKEN_PERSIST_KEY = 'gh-token-persist:v1'
 const HIDE_EMPTY_KEY = 'gh-hide-empty:v1'
 const OAUTH_KEY = 'gh-oauth:v1'
+const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
 
 const ARCHIVED_TTL_MS = 7 * 24 * 60 * 60_000
 
@@ -279,6 +280,24 @@ export function writeOauth<T>(tokens: T | null, persist: boolean): void {
 export function writeResult<T>(repo: string, value: T): void {
   try {
     localStorage.setItem(RESULT_PREFIX + repo, JSON.stringify(value))
+  } catch {
+    // ignore
+  }
+}
+
+export function readAuthorFilter(): 'dependabot' | 'humans' | 'all' {
+  try {
+    const raw = localStorage.getItem(AUTHOR_FILTER_KEY)
+    if (raw === 'dependabot' || raw === 'humans' || raw === 'all') return raw
+    return 'all'
+  } catch {
+    return 'all'
+  }
+}
+
+export function writeAuthorFilter(filter: 'dependabot' | 'humans' | 'all'): void {
+  try {
+    localStorage.setItem(AUTHOR_FILTER_KEY, filter)
   } catch {
     // ignore
   }

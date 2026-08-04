@@ -466,3 +466,23 @@ footer {
   margin-top: 32px;
   font-size: 12px;
 }
+
+.author-filter {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+}
+
+.author-filter-btn {
+  cursor: pointer;
+  padding: 0.25rem 0.7rem;
+}
+
+.author-filter-btn-active {
+  font-weight: 600;
+  outline: 2px solid currentColor;
+}
+
+.author-bot {
+  font-style: italic;
+}
