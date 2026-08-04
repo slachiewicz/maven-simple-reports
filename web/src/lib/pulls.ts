@@ -23,7 +23,7 @@ import {
 import { MAVEN_OWNER } from './repos'
 import { readArchived, writeArchived, writeResult } from './cache'
 import { classifyAuthor } from './authors'
-import type { PullRequestInfo, RepoFetchResult } from './types'
+import type { BuildState, PullRequestInfo, RepoFetchResult } from './types'
 
 interface RepoMetadata {
   archived: boolean
@@ -44,8 +44,6 @@ interface RestPullRequest {
 export interface FetchRepoOptions {
   token?: string | null
   spaceBeforeMs?: number
-  /** Skip fetching check-runs for each PR (faster but no build status). */
-  skipChecks?: boolean
 }
 
 export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): Promise<PrResult> {
@@ -104,40 +102,6 @@ const result: PrResult = {
         buildStateFetchedAt: null,
       }
 
-      if (!opts.skipChecks) {
-        try {
-          const checks = await ghFetch<CheckRunsResponse>(
-            `/repos/${MAVEN_OWNER}/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`,
-            { token: opts.token },
-          )
-          // Legacy combined-status surfaces Apache Jenkins results that
-          // never appear as CheckRuns. Failure here mustn't drop the
-          // CheckRun signal we already have — fall back to checks-only.
-          let status: CommitStatusResponse | null = null
-          try {
-            const statusRes = await ghFetch<CommitStatusResponse>(
-              `/repos/${MAVEN_OWNER}/${repo}/commits/${pr.head.sha}/status?per_page=100`,
-              { token: opts.token },
-            )
-            status = statusRes.data
-          } catch (err) {
-            if (err instanceof GhRateLimitError) {
-              prs.push(pull)
-              throw err
-            }
-          }
-          pull.buildState = deriveBuildState(checks.data, status)
-          pull.buildStateFetchedAt = Date.now()
-        } catch (err) {
-          if (err instanceof GhRateLimitError) {
-            // Stop fetching further checks for this repo; bubble up so caller can pause cycle
-            prs.push(pull)
-            throw err
-          }
-          // Non-rate-limit error on a single PR's checks — leave UNKNOWN, continue
-        }
-      }
-
       prs.push(pull)
     }
 
@@ -161,4 +125,40 @@ const result: PrResult = {
       error: err instanceof Error ? err.message : String(err),
     }
   }
+}
+
+export interface PrBuildResult {
+  state: BuildState
+  fetchedAt: number
+}
+
+/** Cache key for a PR's build state. Includes the head SHA so a push invalidates. */
+export function prBuildKey(pr: PullRequestInfo): string {
+  return `${pr.repo}#${pr.number}#${pr.headSha}`
+}
+
+export async function fetchPrBuildState(
+  key: string,
+  token: string | undefined,
+): Promise<PrBuildResult> {
+  const [repo, , sha] = key.split('#')
+  const checks = await ghFetch<CheckRunsResponse>(
+    `/repos/${MAVEN_OWNER}/${repo}/commits/${sha}/check-runs?per_page=100`,
+    { token },
+  )
+  // Legacy combined-status surfaces Apache Jenkins results that never appear as
+  // CheckRuns. A failure here must not discard the CheckRun signal we already
+  // have — fall back to checks-only. Rate-limit errors still propagate so the
+  // sweep pauses.
+  let status: CommitStatusResponse | null = null
+  try {
+    const statusRes = await ghFetch<CommitStatusResponse>(
+      `/repos/${MAVEN_OWNER}/${repo}/commits/${sha}/status?per_page=100`,
+      { token },
+    )
+    status = statusRes.data
+  } catch (err) {
+    if (err instanceof GhRateLimitError) throw err
+  }
+  return { state: deriveBuildState(checks.data, status), fetchedAt: Date.now() }
 }

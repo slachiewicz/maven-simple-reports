@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchRepoPrs } from './lib/pulls'
+import { fetchPrBuildState, fetchRepoPrs, prBuildKey, type PrBuildResult } from './lib/pulls'
 import { subscribeRateLimit } from './lib/githubFetch'
 import {
   migrateLegacyCache,
@@ -138,6 +138,45 @@ export function App() {
     initialResults: hydratedResults,
   })
 
+  const allPrs = useMemo(
+    () => Object.values(sweep.results).flatMap((r) => r.prs),
+    [sweep.results],
+  )
+
+  // Newest first: a reviewer cares about recent PRs, and an anonymous visitor
+  // will only get through the first few dozen before the 60/h budget runs out.
+  const buildKeys = useMemo(
+    () =>
+      [...allPrs]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(prBuildKey),
+    [allPrs],
+  )
+
+  const buildSweep = useSweep<PrBuildResult>({
+    items: buildKeys,
+    fetchOne: fetchPrBuildState,
+    getToken: acquireToken,
+    intervalMs: authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS,
+    enabled: true,
+  })
+
+  const enrichedResults = useMemo(() => {
+    const out: Record<string, RepoFetchResult> = {}
+    for (const [repo, result] of Object.entries(sweep.results)) {
+      out[repo] = {
+        ...result,
+        prs: result.prs.map((pr) => {
+          const build = buildSweep.results[prBuildKey(pr)]
+          return build
+            ? { ...pr, buildState: build.state, buildStateFetchedAt: build.fetchedAt }
+            : pr
+        }),
+      }
+    }
+    return out
+  }, [sweep.results, buildSweep.results])
+
   const updateToken = (next: string, persist: boolean) => {
     setToken(next)
     setTokenPersist(persist)
@@ -234,6 +273,12 @@ export function App() {
           {totalPrs} open Dependabot PR{totalPrs === 1 ? '' : 's'} across{' '}
           {visibleResults.filter((r) => r.prs.length > 0).length} repos
         </span>
+        <span className="meta-sep">·</span>
+        <span className="muted">
+          {buildSweep.pending.length > 0
+            ? `build status: ${buildKeys.length - buildSweep.pending.length}/${buildKeys.length}`
+            : `build status: ${buildKeys.length} PRs`}
+        </span>
         <span className="meta-sep grow">·</span>
         <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
           Refresh now
@@ -241,7 +286,7 @@ export function App() {
       </section>
 
       <main>
-        <PrTable allRepos={activeRepos} results={sweep.results} inFlight={sweep.cycle.inFlight} />
+        <PrTable allRepos={activeRepos} results={enrichedResults} inFlight={sweep.cycle.inFlight} />
       </main>
 
       <footer className="muted">
