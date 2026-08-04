@@ -41,7 +41,7 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
-import type { RateLimitInfo as RL, PrResult, RepoBranchResult } from './lib/types'
+import type { RateLimitInfo as RL, PrResult } from './lib/types'
 import { type AuthorFilter, matchesAuthorFilter } from './lib/authors'
 import { PrTable } from './components/PrTable'
 import { BranchTable } from './components/BranchTable'
