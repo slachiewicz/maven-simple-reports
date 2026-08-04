@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRepoPrs } from './lib/dependabot'
-import { GhRateLimitError, clearQueueBackoff, subscribeRateLimit } from './lib/githubFetch'
+import { clearQueueBackoff, subscribeRateLimit } from './lib/githubFetch'
+import { useSweep } from './lib/useSweep'
 import {
   migrateLegacyCache,
   readAllResults,
@@ -50,23 +51,6 @@ import { TokenInput } from './components/TokenInput'
 const CYCLE_INTERVAL_ANON_MS = 30 * 60_000
 const CYCLE_INTERVAL_AUTH_MS = 5 * 60_000
 const PER_REPO_SPACING_MS = 800
-const RATE_LIMIT_PAUSE_BUFFER_MS = 5_000
-
-interface CycleState {
-  startedAt: number | null
-  completedAt: number | null
-  inFlight: string | null
-  nextCycleAt: number | null
-  pausedUntil: number | null
-}
-
-const initialCycle: CycleState = {
-  startedAt: null,
-  completedAt: null,
-  inFlight: null,
-  nextCycleAt: null,
-  pausedUntil: null,
-}
 
 function applyFilter(pattern: string): { repos: string[]; invalid: boolean } {
   const trimmed = pattern.trim()
@@ -87,68 +71,65 @@ export function App() {
     readOauth<StoredOauthTokens>(),
   )
   const [oauthError, setOauthError] = useState<string | null>(null)
-  const initialFilter = useMemo(() => applyFilter(filter), [])
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only computed once for init
-  const initialActive = initialFilter.repos
+
+  const [rl, setRl] = useState<RL | null>(null)
+
+  const tokenRef = useRef<string>(token)
+  const oauthRef = useRef<StoredOauthTokens | null>(oauth)
 
   // Hydrate from any prior tab's persisted results so a freshly opened tab
   // shows data instantly (even before its own fetch completes). Also run the
   // one-time migration that evicts the legacy ETag cache from localStorage so
   // persisted results have the full 5 MB budget.
-  const [repos, setRepos] = useState<Record<string, RepoFetchResult>>(() => {
+  const hydratedResults = useMemo(() => {
     const removed = migrateLegacyCache()
     const hydrated = readAllResults<RepoFetchResult>()
     console.log(
       `[cache] migration removed ${removed} legacy ETag entries from localStorage; hydrated ${Object.keys(hydrated).length} repos from persisted results`,
     )
     return hydrated
-  })
-  const [pending, setPending] = useState<string[]>([...initialActive])
-  const [rl, setRl] = useState<RL | null>(null)
-  const [cycle, setCycle] = useState<CycleState>(initialCycle)
-
-  const pendingRef = useRef<string[]>([...initialActive])
-  const activeReposRef = useRef<string[]>([...initialActive])
-  const tokenRef = useRef<string>(token)
-  const oauthRef = useRef<StoredOauthTokens | null>(oauth)
-  const restartTokenRef = useRef(0)
-
-  useEffect(() => {
-    tokenRef.current = token
-  }, [token])
-
-  useEffect(() => {
-    oauthRef.current = oauth
-  }, [oauth])
+  }, [])
 
   const filterResult = useMemo(() => applyFilter(filter), [filter])
   const activeRepos = filterResult.repos
   const filterInvalid = filterResult.invalid
 
-  useEffect(() => {
-    activeReposRef.current = activeRepos
-  }, [activeRepos])
-
   useEffect(() => subscribeRateLimit(setRl), [])
 
-  const syncPending = () => setPending([...pendingRef.current])
+  const acquireToken = useCallback(async (): Promise<string | undefined> => {
+    const current = oauthRef.current
+    if (current) {
+      if (!refreshTokenStillValid(current)) {
+        console.warn('OAuth refresh token expired; falling back to PAT/anonymous')
+        updateOauth(null)
+      } else if (needsRefresh(current)) {
+        try {
+          const refreshed = await refreshOAuthToken(current.refresh_token)
+          updateOauth(refreshed)
+          return refreshed.access_token
+        } catch (err) {
+          console.error('OAuth token refresh failed; falling back to PAT/anonymous', err)
+          setOauthError(err instanceof Error ? err.message : String(err))
+          updateOauth(null)
+        }
+      } else {
+        return current.access_token
+      }
+    }
+    return tokenRef.current || undefined
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const refreshNow = () => {
-    // Non-destructive: keep previously-fetched data on screen, just re-queue all
-    // active repos for a fresh fetch. ETag-cached unchanged responses come back
-    // as 304 so the displayed entries are simply refreshed in place.
-    clearQueueBackoff()
-    pendingRef.current = [...activeReposRef.current]
-    restartTokenRef.current += 1
-    syncPending()
-    setCycle((c) => ({
-      ...c,
-      startedAt: Date.now(),
-      completedAt: null,
-      nextCycleAt: null,
-      pausedUntil: null,
-    }))
-  }
+  const authenticated = !!oauth || !!token
+
+  const sweep = useSweep<RepoFetchResult>({
+    items: activeRepos,
+    fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
+    getToken: acquireToken,
+    intervalMs: authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS,
+    enabled: true,
+    initialResults: hydratedResults,
+  })
 
   const updateToken = (next: string, persist: boolean) => {
     setToken(next)
@@ -159,8 +140,7 @@ export function App() {
     // Lift any pending anonymous-quota backoff and wake the cycle so the
     // higher (or lower, on clear) limit takes effect immediately.
     clearQueueBackoff()
-    restartTokenRef.current += 1
-    setCycle((c) => ({ ...c, pausedUntil: null }))
+    sweep.wake()
   }
 
   const clearTokenAction = () => updateToken('', tokenPersist)
@@ -170,8 +150,7 @@ export function App() {
     writeOauth(next, tokenPersist)
     oauthRef.current = next
     clearQueueBackoff()
-    restartTokenRef.current += 1
-    setCycle((c) => ({ ...c, pausedUntil: null }))
+    sweep.wake()
   }
 
   const connectOauth = () => {
@@ -200,153 +179,17 @@ export function App() {
   const updateFilter = (next: string) => {
     setFilter(next)
     writeFilter(next)
-    const { repos: active } = applyFilter(next)
-    activeReposRef.current = active
-    // Re-queue: only repos that match the new filter and aren't already fetched
-    const fetched = new Set(Object.keys(repos))
-    pendingRef.current = active.filter((r) => !fetched.has(r))
-    syncPending()
-    // Wake the loop so a paused/idle cycle doesn't wait for the next scheduled refill
-    restartTokenRef.current += 1
-    setCycle((c) => ({
-      ...c,
-      startedAt: c.startedAt ?? Date.now(),
-      completedAt: pendingRef.current.length === 0 ? c.completedAt : null,
-      nextCycleAt: pendingRef.current.length === 0 ? c.nextCycleAt : null,
-    }))
   }
-
-  useEffect(() => {
-    let cancelled = false
-
-    const interruptibleSleep = async (ms: number, token: number): Promise<'done' | 'restart'> => {
-      const end = Date.now() + ms
-      while (Date.now() < end) {
-        if (cancelled) return 'done'
-        if (restartTokenRef.current !== token) return 'restart'
-        await new Promise((r) => setTimeout(r, Math.min(500, end - Date.now())))
-      }
-      return 'done'
-    }
-
-    const acquireToken = async (): Promise<string | undefined> => {
-      const current = oauthRef.current
-      if (current) {
-        if (!refreshTokenStillValid(current)) {
-          console.warn('OAuth refresh token expired; falling back to PAT/anonymous')
-          updateOauth(null)
-        } else if (needsRefresh(current)) {
-          try {
-            const refreshed = await refreshOAuthToken(current.refresh_token)
-            updateOauth(refreshed)
-            return refreshed.access_token
-          } catch (err) {
-            console.error('OAuth token refresh failed; falling back to PAT/anonymous', err)
-            setOauthError(err instanceof Error ? err.message : String(err))
-            updateOauth(null)
-          }
-        } else {
-          return current.access_token
-        }
-      }
-      return tokenRef.current || undefined
-    }
-
-    const loop = async () => {
-      setCycle((c) => ({ ...c, startedAt: Date.now(), completedAt: null }))
-      while (!cancelled) {
-        // Drain the pending queue
-        while (pendingRef.current.length > 0 && !cancelled) {
-          const repo = pendingRef.current[0]
-          setCycle((c) => ({ ...c, inFlight: repo }))
-          try {
-            const result = await fetchRepoPrs(repo, {
-              spaceBeforeMs: PER_REPO_SPACING_MS,
-              token: await acquireToken(),
-            })
-            if (cancelled) return
-            setRepos((prev) => ({ ...prev, [repo]: result }))
-            pendingRef.current = pendingRef.current.filter((r) => r !== repo)
-            syncPending()
-          } catch (err) {
-            if (err instanceof GhRateLimitError) {
-              const until = err.until + RATE_LIMIT_PAUSE_BUFFER_MS
-              setCycle((c) => ({ ...c, inFlight: null, pausedUntil: until }))
-              const tok = restartTokenRef.current
-              const wait = until - Date.now()
-              if (wait > 0) {
-                const result = await interruptibleSleep(wait, tok)
-                if (result === 'restart') {
-                  // Token/filter change or restart — wake immediately and retry
-                  // the queue (whatever pendingRef now holds).
-                  setCycle((c) => ({ ...c, pausedUntil: null }))
-                  continue
-                }
-              }
-              if (cancelled) return
-              setCycle((c) => ({ ...c, pausedUntil: null }))
-              // Sleep expired naturally — retry the same repo (still at queue head)
-              continue
-            }
-            // Unrecognized error — record and move on
-            setRepos((prev) => ({
-              ...prev,
-              [repo]: {
-                repo,
-                prs: [],
-                fetchedAt: Date.now(),
-                fromCache: false,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            }))
-            pendingRef.current = pendingRef.current.filter((r) => r !== repo)
-            syncPending()
-          }
-        }
-        if (cancelled) return
-
-        // Cycle complete (or restart drained the queue) — schedule next refill
-        const authenticated = !!oauthRef.current || !!tokenRef.current
-        const cycleInterval = authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS
-        const completed = Date.now()
-        const nextAt = completed + cycleInterval
-        setCycle((c) => ({
-          ...c,
-          completedAt: completed,
-          inFlight: null,
-          nextCycleAt: nextAt,
-          pausedUntil: null,
-        }))
-        const tok = restartTokenRef.current
-        const result = await interruptibleSleep(cycleInterval, tok)
-        if (cancelled) return
-        if (result === 'restart') {
-          // Restart already refilled pendingRef and reset state
-          continue
-        }
-        // Normal interval expired — refill the queue with the currently active set
-        pendingRef.current = [...activeReposRef.current]
-        syncPending()
-        setCycle((c) => ({ ...c, startedAt: Date.now(), completedAt: null, nextCycleAt: null }))
-      }
-    }
-
-    void loop()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const visibleResults = useMemo(() => {
     const active = new Set(activeRepos)
-    return Object.values(repos).filter((r) => active.has(r.repo))
-  }, [repos, activeRepos])
+    return Object.values(sweep.results).filter((r) => active.has(r.repo))
+  }, [sweep.results, activeRepos])
   const totalPrs = useMemo(
     () => visibleResults.reduce((n, r) => n + r.prs.length, 0),
     [visibleResults],
   )
-  const remaining = pending.length
+  const remaining = sweep.pending.length
   const fetched = Math.max(0, activeRepos.length - remaining)
 
   return (
@@ -380,20 +223,20 @@ export function App() {
       <section className="meta">
         <RateLimitInfo rl={rl} />
         <span className="meta-sep">·</span>
-        <CycleStatus cycle={cycle} fetched={fetched} total={activeRepos.length} />
+        <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
         <span className="meta-sep">·</span>
         <span className="muted">
           {totalPrs} open Dependabot PR{totalPrs === 1 ? '' : 's'} across{' '}
           {visibleResults.filter((r) => r.prs.length > 0).length} repos
         </span>
         <span className="meta-sep grow">·</span>
-        <button className="restart" type="button" onClick={refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
+        <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
           Refresh now
         </button>
       </section>
 
       <main>
-        <PrTable allRepos={activeRepos} results={repos} inFlight={cycle.inFlight} />
+        <PrTable allRepos={activeRepos} results={sweep.results} inFlight={sweep.cycle.inFlight} />
       </main>
 
       <footer className="muted">
@@ -420,7 +263,7 @@ function CycleStatus({
   fetched,
   total,
 }: {
-  cycle: CycleState
+  cycle: import('./lib/useSweep').CycleState
   fetched: number
   total: number
 }) {
