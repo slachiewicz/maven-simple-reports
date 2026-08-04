@@ -233,7 +233,10 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   // Seeded with every item, not empty: the old loop always re-verified all repos
   // on load. See the mount guard in the items-changed effect below.
   const pendingRef = useRef<string[]>([...opts.items])
-  const didMountRef = useRef(false)
+  // Last-seen itemsKey, not a boolean "did mount" flag: StrictMode dev-only
+  // double-invokes effects on mount, and a boolean would survive the synthetic
+  // remount and let the second run re-queue against the cache.
+  const lastItemsKeyRef = useRef<string | null>(null)
   const itemsRef = useRef<readonly string[]>(opts.items)
   const resultsRef = useRef<Record<string, T>>(results)
   const restartTokenRef = useRef(0)
@@ -285,15 +288,17 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
+    // Idempotent under StrictMode's dev-only double-invoke: the second synthetic
+    // run carries the same itemsKey, so it exits here rather than re-queueing.
+    if (lastItemsKeyRef.current === itemsKey) return
+    const isFirstRun = lastItemsKeyRef.current === null
+    lastItemsKeyRef.current = itemsKey
     // Mount: pendingRef is already seeded with every item, matching the old loop
     // (App.tsx:106,110 seeded from initialActive unconditionally) which always
     // re-verified all repos on load — ETag 304s make that cheap. Filtering here
     // on mount would skip every repo holding a cached result, and persisted
     // results carry no TTL, so a warm cache would fetch nothing at all.
-    if (!didMountRef.current) {
-      didMountRef.current = true
-      return
-    }
+    if (isFirstRun) return
     const fetched = new Set(Object.keys(resultsRef.current))
     pendingRef.current = opts.items.filter((i) => !fetched.has(i))
     restartTokenRef.current += 1
