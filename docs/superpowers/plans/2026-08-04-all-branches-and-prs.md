@@ -1113,7 +1113,7 @@ Create `web/src/lib/githubGraphql.test.ts`:
 ```ts
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GhGraphQLError, ghGraphQL } from './githubGraphql'
-import { GhRateLimitError } from './githubFetch'
+import { GhRateLimitError, clearQueueBackoff } from './githubFetch'
 
 function mockResponse(body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -1124,6 +1124,10 @@ function mockResponse(body: unknown, headers: Record<string, string> = {}): Resp
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  // apiQueue is a module singleton shared with githubFetch.ts. The rate-limit
+  // tests set a real 60 s backoff on it; without clearing it here every later
+  // test in the file blocks on that backoff and hits the Vitest timeout.
+  clearQueueBackoff()
 })
 
 describe('ghGraphQL', () => {
