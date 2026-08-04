@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSweep } from '../lib/useSweep'
 import { fetchRepoBranches } from '../lib/branches'
 import {
@@ -35,9 +35,10 @@ interface Props {
   activeRepos: readonly string[]
   getToken: () => Promise<string | undefined>
   hasToken: boolean
+  tokenEpoch: number
 }
 
-export function BranchesView({ activeRepos, getToken, hasToken }: Props) {
+export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Props) {
   const [staleOnly, setStaleOnlyState] = useState<boolean>(() => readStaleOnly())
   const [threshold, setThresholdState] = useState<number>(() => readStaleThreshold())
 
@@ -51,6 +52,15 @@ export function BranchesView({ activeRepos, getToken, hasToken }: Props) {
     enabled: hasToken,
     initialResults,
   })
+
+  // A token saved or replaced mid-sleep must resume immediately rather than
+  // waiting out the current interval or a rate-limit pause; the enabled
+  // false→true transition only covers going from no-token to token.
+  useEffect(() => {
+    if (tokenEpoch === 0) return
+    sweep.wake()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wake on credential change only
+  }, [tokenEpoch])
 
   const setStaleOnly = (v: boolean) => {
     setStaleOnlyState(v)

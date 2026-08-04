@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { type CycleState, useSweep } from '../lib/useSweep'
 import { fetchPrBuildState, fetchRepoPrs, prBuildKey, type PrBuildResult } from '../lib/pulls'
 import {
@@ -39,9 +39,10 @@ interface Props {
   activeRepos: readonly string[]
   getToken: () => Promise<string | undefined>
   authenticated: boolean
+  tokenEpoch: number
 }
 
-export function PullRequestsView({ activeRepos, getToken, authenticated }: Props) {
+export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEpoch }: Props) {
   const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
 
   // Hydrate from any prior tab's persisted results so a freshly opened tab
@@ -87,6 +88,15 @@ export function PullRequestsView({ activeRepos, getToken, authenticated }: Props
     intervalMs,
     enabled: true,
   })
+
+  // A token saved mid-sleep must resume immediately rather than waiting out a
+  // rate-limit pause; useSweep only re-reads the token on its next fetch.
+  useEffect(() => {
+    if (tokenEpoch === 0) return
+    sweep.wake()
+    buildSweep.wake()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wake on credential change only
+  }, [tokenEpoch])
 
   const enrichedResults = useMemo(() => {
     const out: Record<string, PrResult> = {}

@@ -70,6 +70,10 @@ export function App() {
   const [oauthError, setOauthError] = useState<string | null>(null)
   const [rl, setRl] = useState<RL | null>(null)
   const [view, setViewState] = useState<ViewKey>(() => readViewFromUrl())
+  // Bumped whenever the token or OAuth credentials change, so a view whose
+  // sweep is mid-sleep (an inter-cycle wait or a rate-limit pause) can wake
+  // immediately instead of waiting out the remainder on stale credentials.
+  const [tokenEpoch, setTokenEpoch] = useState(0)
 
   const tokenRef = useRef<string>(token)
   const oauthRef = useRef<StoredOauthTokens | null>(oauth)
@@ -136,6 +140,7 @@ export function App() {
     writeToken(next, persist)
     writeTokenPersist(persist)
     tokenRef.current = next
+    setTokenEpoch((n) => n + 1)
   }
 
   const clearTokenAction = () => updateToken('', tokenPersist)
@@ -144,6 +149,7 @@ export function App() {
     setOauth(next)
     writeOauth(next, tokenPersist)
     oauthRef.current = next
+    setTokenEpoch((n) => n + 1)
   }
 
   const connectOauth = () => {
@@ -234,12 +240,14 @@ export function App() {
             activeRepos={activeRepos}
             getToken={acquireToken}
             authenticated={authenticated}
+            tokenEpoch={tokenEpoch}
           />
         ) : (
           <BranchesView
             activeRepos={activeRepos}
             getToken={acquireToken}
             hasToken={authenticated}
+            tokenEpoch={tokenEpoch}
           />
         )}
       </main>
