@@ -26,6 +26,8 @@ const OAUTH_KEY = 'gh-oauth:v1'
 const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
 const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
 const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
+const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
+const STALE_ONLY_KEY = 'gh-stale-only:v1'
 
 const ARCHIVED_TTL_MS = 7 * 24 * 60 * 60_000
 
@@ -381,4 +383,39 @@ export function readAllBranchResults<T>(): Record<string, T> {
     // ignore
   }
   return out
+}
+
+export function readStaleThreshold(): number {
+  try {
+    const raw = Number(localStorage.getItem(STALE_THRESHOLD_KEY))
+    if (Number.isFinite(raw) && raw > 0) return raw
+    return 90
+  } catch {
+    return 90
+  }
+}
+
+export function writeStaleThreshold(days: number): void {
+  try {
+    localStorage.setItem(STALE_THRESHOLD_KEY, String(days))
+  } catch {
+    // ignore
+  }
+}
+
+export function readStaleOnly(): boolean {
+  try {
+    // Default true — the view exists to surface stale branches.
+    return localStorage.getItem(STALE_ONLY_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function writeStaleOnly(value: boolean): void {
+  try {
+    localStorage.setItem(STALE_ONLY_KEY, value ? '1' : '0')
+  } catch {
+    // ignore
+  }
 }
