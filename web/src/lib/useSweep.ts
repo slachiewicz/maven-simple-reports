@@ -64,7 +64,7 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const itemsRef = useRef<readonly string[]>(opts.items)
   const resultsRef = useRef<Record<string, T>>(results)
   const restartTokenRef = useRef(0)
-  const didMountRef = useRef(false)
+  const lastItemsKeyRef = useRef<string | null>(null)
 
   // Latest-value refs so the loop below can keep empty deps. The loop must be
   // started exactly once; re-running the effect would abandon an in-flight
@@ -110,13 +110,15 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
+    // Idempotent under StrictMode's dev-only double-invoke: the second synthetic
+    // run carries the same itemsKey, so it exits here rather than re-queueing.
+    if (lastItemsKeyRef.current === itemsKey) return
+    const isFirstRun = lastItemsKeyRef.current === null
+    lastItemsKeyRef.current = itemsKey
     // Mount: pendingRef is already seeded with every item, matching the old
     // loop, which always re-verified all repos on load (ETag 304s are cheap).
     // Only a genuine post-mount item-set change filters against results.
-    if (!didMountRef.current) {
-      didMountRef.current = true
-      return
-    }
+    if (isFirstRun) return
     const fetched = new Set(Object.keys(resultsRef.current))
     pendingRef.current = opts.items.filter((i) => !fetched.has(i))
     restartTokenRef.current += 1
