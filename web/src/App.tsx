@@ -183,9 +183,10 @@ export function App() {
     writeToken(next, persist)
     writeTokenPersist(persist)
     tokenRef.current = next
-    // Lift any pending anonymous-quota backoff and wake the cycle so the
+    // Lift any pending anonymous-quota backoff and wake both sweeps so the
     // higher (or lower, on clear) limit takes effect immediately.
     sweep.wake()
+    buildSweep.wake()
   }
 
   const clearTokenAction = () => updateToken('', tokenPersist)
@@ -195,6 +196,7 @@ export function App() {
     writeOauth(next, tokenPersist)
     oauthRef.current = next
     sweep.wake()
+    buildSweep.wake()
   }
 
   const connectOauth = () => {
