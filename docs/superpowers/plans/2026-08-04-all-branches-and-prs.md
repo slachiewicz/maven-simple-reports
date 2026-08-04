@@ -969,7 +969,9 @@ and in `PrRow`, after the title cell:
       </td>
 ```
 
-Change the two `colSpan={4}` occurrences in the repo-header row to `colSpan={5}`.
+Change the `colSpan={4}` on the repo-header row to `colSpan={5}` so it still spans
+the full table now that Author is a fifth column. There is exactly one such
+occurrence in `PrTable.tsx`.
 
 Change the empty-state text at old line 231 from `· no Dependabot PRs ·` to:
 
