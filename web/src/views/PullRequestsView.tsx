@@ -69,9 +69,14 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     initialResults: hydratedResults,
   })
 
+  const activeRepoSet = useMemo(() => new Set(activeRepos), [activeRepos])
+
   const allPrs = useMemo(
-    () => Object.values(sweep.results).flatMap((r) => r.prs),
-    [sweep.results],
+    () =>
+      Object.values(sweep.results)
+        .filter((r) => activeRepoSet.has(r.repo))
+        .flatMap((r) => r.prs),
+    [sweep.results, activeRepoSet],
   )
 
   // Newest first: a reviewer cares about recent PRs, and an anonymous visitor
@@ -86,7 +91,10 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     fetchOne: fetchPrBuildState,
     getToken,
     intervalMs,
-    enabled: true,
+    // Enrichment must not compete with the inventory sweep for the shared serial
+    // queue: the full PR table has to render first, then badges fill in behind it.
+    // This also lets enrichment use the inventory sweep's idle inter-cycle window.
+    enabled: sweep.pending.length === 0,
   })
 
   // A token saved mid-sleep must resume immediately rather than waiting out a
@@ -129,10 +137,10 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     writeAuthorFilter(next)
   }
 
-  const visibleResults = useMemo(() => {
-    const active = new Set(activeRepos)
-    return Object.values(enrichedResults).filter((r) => active.has(r.repo))
-  }, [enrichedResults, activeRepos])
+  const visibleResults = useMemo(
+    () => Object.values(enrichedResults).filter((r) => activeRepoSet.has(r.repo)),
+    [enrichedResults, activeRepoSet],
+  )
 
   const remaining = sweep.pending.length
   const fetched = Math.max(0, activeRepos.length - remaining)

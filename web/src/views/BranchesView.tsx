@@ -89,7 +89,10 @@ export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Pr
     )
   }
 
-  const fetchedCount = Object.keys(sweep.results).length
+  const fetchedCount = useMemo(
+    () => activeRepos.filter((r) => sweep.results[r] !== undefined).length,
+    [activeRepos, sweep.results],
+  )
 
   return (
     <>

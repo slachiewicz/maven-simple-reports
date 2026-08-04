@@ -77,6 +77,7 @@ export function App() {
 
   const tokenRef = useRef<string>(token)
   const oauthRef = useRef<StoredOauthTokens | null>(oauth)
+  const tokenPersistRef = useRef<boolean>(tokenPersist)
 
   useEffect(() => {
     tokenRef.current = token
@@ -85,6 +86,10 @@ export function App() {
   useEffect(() => {
     oauthRef.current = oauth
   }, [oauth])
+
+  useEffect(() => {
+    tokenPersistRef.current = tokenPersist
+  }, [tokenPersist])
 
   const filterResult = useMemo(() => applyFilter(filter), [filter])
   const activeRepos = filterResult.repos
@@ -100,8 +105,10 @@ export function App() {
     window.history.replaceState(null, '', url)
   }
 
-  // Back/forward must move between tabs, not silently leave the URL and the
-  // rendered view disagreeing.
+  // Tab switches use replaceState so they do not spam the back stack — the
+  // ?view= param exists to make a view linkable. This listener keeps the
+  // rendered tab in sync if the URL changes underneath us (e.g. the user
+  // navigates back into the app from another page with ?view= set).
   useEffect(() => {
     const onPop = () => setViewState(readViewFromUrl())
     window.addEventListener('popstate', onPop)
@@ -140,6 +147,7 @@ export function App() {
     writeToken(next, persist)
     writeTokenPersist(persist)
     tokenRef.current = next
+    tokenPersistRef.current = persist
     setTokenEpoch((n) => n + 1)
   }
 
@@ -147,7 +155,7 @@ export function App() {
 
   const updateOauth = (next: StoredOauthTokens | null) => {
     setOauth(next)
-    writeOauth(next, tokenPersist)
+    writeOauth(next, tokenPersistRef.current)
     oauthRef.current = next
     setTokenEpoch((n) => n + 1)
   }
