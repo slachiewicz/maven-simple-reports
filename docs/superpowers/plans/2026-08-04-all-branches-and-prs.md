@@ -227,10 +227,13 @@ export interface SweepResult<T> {
 
 export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const [results, setResults] = useState<Record<string, T>>(() => opts.initialResults ?? {})
-  const [pending, setPending] = useState<string[]>([])
+  const [pending, setPending] = useState<string[]>([...opts.items])
   const [cycle, setCycle] = useState<CycleState>(initialCycle)
 
-  const pendingRef = useRef<string[]>([])
+  // Seeded with every item, not empty: the old loop always re-verified all repos
+  // on load. See the mount guard in the items-changed effect below.
+  const pendingRef = useRef<string[]>([...opts.items])
+  const didMountRef = useRef(false)
   const itemsRef = useRef<readonly string[]>(opts.items)
   const resultsRef = useRef<Record<string, T>>(results)
   const restartTokenRef = useRef(0)
@@ -256,6 +259,10 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const syncPending = () => setPending([...pendingRef.current])
 
   const wake = () => {
+    // Callers (updateToken/updateOauth) need the queue's own backoff lifted too,
+    // so a token saved during a rate-limit pause takes effect immediately rather
+    // than waiting out the anonymous reset.
+    clearQueueBackoff()
     restartTokenRef.current += 1
   }
 
@@ -278,6 +285,15 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
+    // Mount: pendingRef is already seeded with every item, matching the old loop
+    // (App.tsx:106,110 seeded from initialActive unconditionally) which always
+    // re-verified all repos on load — ETag 304s make that cheap. Filtering here
+    // on mount would skip every repo holding a cached result, and persisted
+    // results carry no TTL, so a warm cache would fetch nothing at all.
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
     const fetched = new Set(Object.keys(resultsRef.current))
     pendingRef.current = opts.items.filter((i) => !fetched.has(i))
     restartTokenRef.current += 1
