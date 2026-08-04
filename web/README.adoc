@@ -14,24 +14,29 @@
 // limitations under the License.
 //
 
-= Maven Dependabot Dashboard (SPA)
+= Maven Pull Requests & Branches Dashboard (SPA)
 :icons: font
 
-A statically hosted single-page app that calls the GitHub REST API directly from the browser to show all open Dependabot PRs across the Apache Maven repositories, including build status.
+A statically hosted single-page app with two tabs covering the ~98 `apache/maven-*` repositories:
+
+* *Pull requests* — every open PR (not just Dependabot's), with author and live build status. Calls the GitHub REST API directly from the browser; works without a token.
+* *Branches* — stale-branch detection: branches with no recent commits, no open PR, and no protection rule. Calls the GitHub GraphQL API and requires a token.
 
 It replaces the previously cron-generated `dependabot-prs.html` page.
 
 == Status
 
-Two authentication paths are available, both optional:
+Two authentication paths are available:
 
 . *Sign in with GitHub* — full OAuth Authorization Code + PKCE flow via a registered GitHub App.
 Access tokens (~8 h) are refreshed automatically using the long-lived refresh token (~6 months).
 . *Personal Access Token* — manually pasted into the Settings panel.
 No expiry-handling, but works without any backend.
 
-Either path lifts the API limit from 60 req/h (anonymous) to ~5 000 req/h and shortens the refresh cycle from 30 min to 5 min.
-The default state is anonymous, so the dashboard works for visitors without setup.
+Both are optional for the *Pull requests* tab. Either path lifts the REST API limit from 60 req/h (anonymous) to ~5 000 req/h and shortens the *Pull requests* refresh cycle from 30 min to 5 min.
+The default state is anonymous, so the *Pull requests* tab works for visitors without setup.
+
+The *Branches* tab always requires one of the two paths above — GitHub's GraphQL API rejects unauthenticated requests outright, so an anonymous visitor sees a sign-in prompt instead of data. See _Branches_ below.
 
 == Architecture
 
@@ -43,9 +48,24 @@ The functions never touch the dashboard's PR data — that still goes browser-to
 Unchanged responses come back as 304 and reuse the cached body.
 * *Serial request scheduling* (one in-flight request at a time) to stay within GitHub's secondary rate-limit guidance.
 * *Backoff on 403/429* using `x-ratelimit-reset` or `Retry-After`.
-* *Polling*: ~30 minutes between full refresh cycles unauthenticated, ~5 minutes with a PAT configured. Inter-request gap spreads the load across the rate-limit window.
+* *GraphQL client* (`lib/githubGraphql.ts`) for the Branches tab — same rate-limit pub/sub and backoff plumbing as the REST queue, but posts to `/graphql` and handles GitHub's point-based (rather than request-count) rate limiting.
+* *Two independent polling loops* (`lib/useSweep.ts`, shared by both tabs) — only the active tab's loop runs; the inactive tab costs nothing until switched to.
+** *Pull requests* (REST): ~30 minutes between full cycles unauthenticated, ~5 minutes with a token configured. An inter-request gap spreads the load across the rate-limit window. Fetching happens in two phases: a cheap per-repo inventory sweep (one call per repo, so the full table renders fast) followed by build-status enrichment keyed by head SHA, so a PR whose head hasn't moved costs nothing on a later cycle.
+** *Branches* (GraphQL): fixed 10-minute cycle, always requires a token.
 
 == UI controls
+
+Tabs::
+Two tabs, *Pull requests* (default) and *Branches*, selected via a query parameter: `?view=branches` for the Branches tab, no parameter (or `?view=prs`) for Pull requests.
+Only the active tab's sweep loop runs; switching tabs doesn't lose the other tab's data — results are persisted in `localStorage` and rehydrate instantly on return.
+Browser back/forward moves between tabs by re-reading the URL.
+
+Author filter (Pull requests tab)::
+Three buttons — *All* (default), *Dependabot*, *People* — filter the PR table by author, with a live count on each button.
+Classification trusts the GitHub API's `user.type` field for bots and pattern-matches Dependabot's login; anything else is *People*.
+
+Stale-only / threshold (Branches tab)::
+A *Stale only* checkbox, checked by default, restricts the branch table to stale branches. The age threshold defaults to *90 days* and is editable inline (1-3650); both settings persist in `localStorage`.
 
 Settings · Sign in with GitHub::
 The recommended path.
@@ -80,14 +100,16 @@ The pattern is persisted in `localStorage` and applied immediately: previously f
 Useful to stay within the unauthenticated 60/h quota by polling only the repos you care about (e.g. `mvnd|surefire`).
 
 Refresh now::
-Re-queues all active repos for an immediate refresh and lifts any pending rate-limit backoff.
+Re-queues all active repos in the current tab for an immediate refresh and lifts any pending rate-limit backoff.
 The action is non-destructive: previously fetched entries remain visible until each repo is updated in place.
 ETag-cached responses that haven't changed come back as 304 responses (no response body to re-download), so this is cheap when the data is stable.
 
 == Rate limits (important)
 
+This section covers the REST API, used by the *Pull requests* tab. The *Branches* tab uses GraphQL's separate, point-based budget — see _Branches_ below.
+
 GitHub's unauthenticated REST API limit is 60 requests per hour per IP, *shared* across all visitors going through the same egress IP.
-The dashboard touches roughly _N_repos + N_dependabot_PRs_ endpoints per cycle, so the unauthenticated quota will be exhausted on the first refresh.
+The *Pull requests* tab touches roughly _N_repos + N_open_PRs_ endpoints per cycle, so the unauthenticated quota will be exhausted on the first refresh.
 That degraded mode is tolerable because:
 
 * The first cycle populates the cache; subsequent cycles mostly receive 304 responses.
@@ -95,6 +117,19 @@ That degraded mode is tolerable because:
 * The UI surfaces the current quota and pause state so users can see when refresh is throttled.
 
 Either authenticated path documented above (OAuth or PAT) lifts the limit to ~5 000/h per token, and is the recommended setup for anything beyond a quick look.
+
+== Branches
+
+The *Branches* tab (`views/BranchesView.tsx`) surfaces candidates for deletion: branches with no recent activity, no open PR, and no protection rule.
+
+* *GraphQL, not REST* — `lib/githubGraphql.ts` posts to `https://api.github.com/graphql`. GitHub rejects unauthenticated GraphQL requests outright (unlike REST's 60 req/h anonymous allowance), so this tab always requires a token from either auth path in _Status_. Without one, it shows a sign-in prompt and issues no request.
+* *One query per repo* fetches up to 100 branch refs (`refs(refPrefix:"refs/heads/", first:100)`), each with its last commit, author, open-PR count, protection status, and ahead/behind counts against the default branch, in a single round trip.
+* *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the fixed 10-minute sweep cadence leaves comfortable headroom across ~98 repos.
+* *Exclusions* — a branch is never flagged stale if it is:
+. the repository's default branch,
+. protected (detected via `refUpdateRule`, the signal visible without repo-admin access — `branchProtectionRule` needs admin and would be null for every `apache/*` repo), or
+. the head of an open pull request.
+* If the ahead/behind comparison times out (it's evaluated per ref, and a full 100-ref page can push the query past GitHub's limit), the query is retried without it; the branch still appears with age and PR status, and a degraded notice is shown instead.
 
 == Local development
 
@@ -115,6 +150,16 @@ npm run typecheck    # tsc -b --noEmit
 
 The repo's top-level `scripts/generate_report.sh` runs `npm ci && npm run build` and copies `web/dist/` into `public/dependabot-prs/` so the existing GitHub Pages / Netlify deploy step picks it up.
 
+== Tests
+
+[source,bash]
+----
+npm test             # vitest run
+npm run test:watch   # same, in watch mode
+----
+
+`npm test` runs Vitest over pure logic in `src/lib/*.test.ts` (author classification, the stale-branch predicate, build-status derivation, the GraphQL client's error handling, and similar). Components, network behaviour, and the `useSweep` polling loop are not covered by automated tests.
+
 == Layout
 
 [source]
@@ -126,23 +171,32 @@ web/
 ├── vite.config.ts
 └── src/
     ├── main.tsx
-    ├── App.tsx              # cycle orchestration, top-level UI
+    ├── App.tsx                  # tab routing (?view=), auth state, top-level UI
     ├── styles.css
-    ├── components/          # presentational
+    ├── views/
+    │   ├── PullRequestsView.tsx # Pull requests tab: two-phase REST sweep, author filter
+    │   └── BranchesView.tsx     # Branches tab: GraphQL sweep, stale-only + threshold controls
+    ├── components/              # presentational
     │   ├── PrTable.tsx
+    │   ├── BranchTable.tsx
+    │   ├── AuthorFilter.tsx     # All / Dependabot / People buttons
     │   ├── StatusBadge.tsx
     │   ├── RateLimitInfo.tsx
-    │   ├── FilterInput.tsx  # regex repo filter (persisted in localStorage)
-    │   └── TokenInput.tsx   # OAuth + PAT settings section
+    │   ├── FilterInput.tsx      # regex repo filter (persisted in localStorage)
+    │   └── TokenInput.tsx       # OAuth + PAT settings section
     └── lib/
-        ├── repos.ts         # the apache/maven-* list
+        ├── repos.ts             # the apache/maven-* list
         ├── types.ts
-        ├── cache.ts         # local/sessionStorage wrapper
-        ├── githubFetch.ts   # serial queue, ETag, backoff, rate-limit pub/sub
-        ├── buildStatus.ts   # check-runs → BuildState
-        ├── dependabot.ts    # per-repo: list PRs, fetch checks
-        ├── pkce.ts          # RFC 7636 code verifier + challenge
-        └── oauth.ts         # OAuth start / complete / refresh, talks to functions
+        ├── cache.ts             # local/sessionStorage wrapper
+        ├── githubFetch.ts       # serial REST queue, ETag, backoff, rate-limit pub/sub
+        ├── githubGraphql.ts     # GraphQL client (Branches tab), point-based backoff
+        ├── useSweep.ts          # shared polling loop used by both tabs
+        ├── buildStatus.ts       # check-runs + combined-status → BuildState
+        ├── pulls.ts             # per-repo: list PRs, fetch build state
+        ├── authors.ts           # Dependabot / bot / human classification
+        ├── branches.ts          # per-repo branch fetch, stale predicate
+        ├── pkce.ts              # RFC 7636 code verifier + challenge
+        └── oauth.ts             # OAuth start / complete / refresh, talks to functions
 ----
 
 The Netlify Functions live in a sibling directory at the repo root:
@@ -226,6 +280,9 @@ A future hardening would move tokens into HTTP-only cookies set by the token-exc
 * Build status combines the modern *check-runs* endpoint with the legacy *combined commit status* (used by Apache Jenkins for the maven-box plugin builds).
 A failure in either source flips the PR to FAILURE; this costs one extra REST call per PR.
 * Merge-conflict detection is not implemented (would require an extra `GET /pulls/<n>` call per PR).
+* Only the first 100 branches and first 100 open PRs per repo are fetched — neither paginates. A repo with more than 100 branches shows a "showing the first 100 of _N_" marker in the Branches tab; PRs have no equivalent truncation indicator.
+* No build status is fetched for branches, only for PRs.
+* Branch ahead/behind counts can be missing (shown as `—`) when the comparison query times out; see _Branches_ above.
 * No service worker / push notifications.
 
 == Future options for status fetching
@@ -243,6 +300,8 @@ Pros: fixes the Jenkins blind spot for free, fewer total requests, all the metad
 Cons: GraphQL requires authentication (no anonymous mode), uses a *point-based* rate limit rather than request counts (one bad nested query can cost 100+ points), and would need a rewrite of `githubFetch.ts` (different error/retry shape, weaker ETag/304 hit rates).
 +
 Reasonable to consider once OAuth is the dominant access path and anonymous mode is no longer the primary fallback.
++
+NOTE: `lib/githubGraphql.ts` already exists for the Branches tab, so some of this migration's plumbing cost is already paid — extending it to PR build status is a smaller lift than it would have been before the Branches tab shipped.
 
 Option 3: hybrid REST + GraphQL::
 REST when anonymous (current behavior), GraphQL when authenticated.
