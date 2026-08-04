@@ -1976,7 +1976,7 @@ git commit -m "Add the branch table component"
 
 **Interfaces:**
 - Consumes: `useSweep` (Task 2), `fetchRepoBranches` (Task 7), `BranchTable` (Task 8)
-- Produces: `<BranchesView activeRepos getToken hasToken onRequestSignIn />`, `readStaleThreshold()`, `writeStaleThreshold(days)`, `readStaleOnly()`, `writeStaleOnly(v)`
+- Produces: `<BranchesView activeRepos getToken hasToken />`, `readStaleThreshold()`, `writeStaleThreshold(days)`, `readStaleOnly()`, `writeStaleOnly(v)`. The sign-in panel points at the existing Settings controls rather than taking a callback, so there is no `onRequestSignIn` prop.
 
 - [ ] **Step 1: Add preference persistence to `web/src/lib/cache.ts`**
 
