@@ -39,7 +39,7 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
-import type { RateLimitInfo as RL, RepoFetchResult } from './lib/types'
+import type { RateLimitInfo as RL, PrResult } from './lib/types'
 import { PrTable } from './components/PrTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
@@ -83,7 +83,7 @@ export function App() {
   // persisted results have the full 5 MB budget.
   const hydratedResults = useMemo(() => {
     const removed = migrateLegacyCache()
-    const hydrated = readAllResults<RepoFetchResult>()
+    const hydrated = readAllResults<PrResult>()
     console.log(
       `[cache] migration removed ${removed} legacy ETag entries from localStorage; hydrated ${Object.keys(hydrated).length} repos from persisted results`,
     )
@@ -122,7 +122,7 @@ export function App() {
 
   const authenticated = !!oauth || !!token
 
-  const sweep = useSweep<RepoFetchResult>({
+  const sweep = useSweep<PrResult>({
     items: activeRepos,
     fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
     getToken: acquireToken,

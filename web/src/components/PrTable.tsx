@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react'
-import type { DependabotPr, RepoFetchResult } from '../lib/types'
+import type { PrRow, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { StatusBadge } from './StatusBadge'
@@ -53,7 +53,7 @@ interface BuildCounts {
   unknown: number
 }
 
-function countBuildStates(prs: DependabotPr[]): BuildCounts {
+function countBuildStates(prs: PrRow[]): BuildCounts {
   const c: BuildCounts = { success: 0, failure: 0, pending: 0, unknown: 0 }
   for (const pr of prs) {
     switch (pr.buildState) {
@@ -77,7 +77,7 @@ function countBuildStates(prs: DependabotPr[]): BuildCounts {
 
 interface Props {
   allRepos: readonly string[]
-  results: Record<string, RepoFetchResult>
+  results: Record<string, PrResult>
   inFlight: string | null
 }
 
@@ -172,7 +172,7 @@ export function PrTable({ allRepos, results, inFlight }: Props) {
 
 interface RepoRowsProps {
   repo: string
-  result: RepoFetchResult | undefined
+  result: PrResult | undefined
   isInFlight: boolean
   collapsed: boolean
   onToggle: () => void
@@ -215,7 +215,7 @@ function RepoRows({ repo, result, isInFlight, collapsed, onToggle }: RepoRowsPro
 }
 
 interface RepoMetaProps {
-  result: RepoFetchResult | undefined
+  result: PrResult | undefined
   isInFlight: boolean
   counts: BuildCounts
   prCount: number
@@ -259,7 +259,7 @@ function RepoMeta({ result, isInFlight, counts, prCount }: RepoMetaProps) {
   )
 }
 
-function PrRow({ pr }: { pr: DependabotPr }) {
+function PrRow({ pr }: { pr: PrRow }) {
   return (
     <tr className="pr-row">
       <td className="pr-indent">

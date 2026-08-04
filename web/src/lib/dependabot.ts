@@ -22,7 +22,8 @@ import {
 } from './buildStatus'
 import { MAVEN_OWNER } from './repos'
 import { readArchived, writeArchived, writeResult } from './cache'
-import type { DependabotPr, RepoFetchResult } from './types'
+import { classifyAuthor } from './authors'
+import type { PrRow, PrResult } from './types'
 
 interface RepoMetadata {
   archived: boolean
@@ -54,7 +55,7 @@ export interface FetchRepoOptions {
   skipChecks?: boolean
 }
 
-export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): Promise<RepoFetchResult> {
+export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): Promise<PrResult> {
   try {
     // Step 1: archived check (cached in localStorage for 7 days). If archived,
     // we skip the PR fetch entirely so quota isn't wasted on dead repos.
@@ -72,7 +73,7 @@ export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): P
     }
 
     if (archived) {
-      const result: RepoFetchResult = {
+const result: PrResult = {
         repo,
         prs: [],
         fetchedAt: Date.now(),
@@ -90,14 +91,15 @@ export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): P
 
     const dependabotPulls = list.data.filter((p) => isDependabotAuthor(p.user?.login))
 
-    const prs: DependabotPr[] = []
+    const prs: PrRow[] = []
     for (const pr of dependabotPulls) {
       const baseUrl = `https://github.com/${MAVEN_OWNER}/${repo}`
-      const pull: DependabotPr = {
+      const pull: PrRow = {
         repo,
         number: pr.number,
         title: pr.title,
         author: pr.user?.login ?? 'unknown',
+        authorType: classifyAuthor(pr.user?.login ?? null, pr.user?.type ?? null),
         createdAt: pr.created_at,
         updatedAt: pr.updated_at,
         isDraft: pr.draft,
@@ -146,7 +148,7 @@ export async function fetchRepoPrs(repo: string, opts: FetchRepoOptions = {}): P
       prs.push(pull)
     }
 
-    const result: RepoFetchResult = {
+    const result: PrResult = {
       repo,
       prs,
       fetchedAt: Date.now(),

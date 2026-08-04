@@ -27,11 +27,12 @@ export interface RateLimitInfo {
   resetAt: number // ms epoch
 }
 
-export interface DependabotPr {
+export interface PrRow {
   repo: string
   number: number
   title: string
   author: string
+  authorType: string | null
   createdAt: string
   updatedAt: string
   isDraft: boolean
@@ -43,9 +44,9 @@ export interface DependabotPr {
   buildStateFetchedAt: number | null
 }
 
-export interface RepoFetchResult {
+export interface PrResult {
   repo: string
-  prs: DependabotPr[]
+  prs: PrRow[]
   fetchedAt: number
   fromCache: boolean
   error?: string
@@ -53,10 +54,35 @@ export interface RepoFetchResult {
 }
 
 export interface DashboardState {
-  repos: Record<string, RepoFetchResult>
+  repos: Record<string, PrResult>
   rateLimit: RateLimitInfo | null
   lastError: string | null
   cycleStartedAt: number | null
   cycleCompletedAt: number | null
   inFlightRepo: string | null
+}
+
+export interface BranchInfo {
+  repo: string
+  name: string
+  lastCommitDate: string | null
+  lastCommitAuthor: string | null
+  headSha: string
+  isProtected: boolean
+  openPrCount: number
+  aheadBy: number | null
+  behindBy: number | null
+  isDefault: boolean
+}
+
+export interface RepoBranchResult {
+  repo: string
+  branches: BranchInfo[]
+  defaultBranch: string
+  fetchedAt: number
+  totalCount: number
+  truncated: boolean
+  degraded: boolean
+  error?: string
+  archived?: boolean
 }
