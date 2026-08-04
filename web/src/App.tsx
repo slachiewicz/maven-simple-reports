@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRepoPrs } from './lib/dependabot'
 import { clearQueueBackoff, subscribeRateLimit } from './lib/githubFetch'
 import { useSweep } from './lib/useSweep'
+import { useBranchSweep } from './lib/useBranchSweep'
 
 import {
   migrateLegacyCache,
@@ -40,9 +41,10 @@ import {
   type StoredOauthTokens,
 } from './lib/oauth'
 import { MAVEN_REPOS } from './lib/repos'
-import type { RateLimitInfo as RL, PrResult } from './lib/types'
+import type { RateLimitInfo as RL, PrResult, RepoBranchResult } from './lib/types'
 import { type AuthorFilter, matchesAuthorFilter } from './lib/authors'
 import { PrTable } from './components/PrTable'
+import { BranchTable } from './components/BranchTable'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
 import { TokenInput } from './components/TokenInput'
@@ -136,6 +138,13 @@ export function App() {
     enabled: tab === 'prs',
     initialResults: hydratedResults,
   })
+
+  const branchSweep = useBranchSweep(
+    activeRepos,
+    acquireToken,
+    CYCLE_INTERVAL_AUTH_MS,
+    tab === 'branches' && authenticated
+  )
 
   const updateToken = (next: string, persist: boolean) => {
     setToken(next)
@@ -275,23 +284,48 @@ export function App() {
         </section>
       )}
 
-      <section className="meta">
-        <RateLimitInfo rl={rl} />
-        <span className="meta-sep">·</span>
-        <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
-        <span className="meta-sep">·</span>
-        <span className="muted">
-          {totalPrs} open PR{totalPrs === 1 ? '' : 's'} across{' '}
-          {visibleResults.length} repos
-        </span>
-        <span className="meta-sep grow">·</span>
-        <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
-          Refresh now
-        </button>
-      </section>
+      {tab === 'prs' && (
+        <section className="meta">
+          <RateLimitInfo rl={rl} />
+          <span className="meta-sep">·</span>
+          <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
+          <span className="meta-sep">·</span>
+          <span className="muted">
+            {totalPrs} open PR{totalPrs === 1 ? '' : 's'} across{' '}
+            {visibleResults.length} repos
+          </span>
+          <span className="meta-sep grow">·</span>
+          <button className="restart" type="button" onClick={sweep.refreshNow} title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)">
+            Refresh now
+          </button>
+        </section>
+      )}
+
+      {tab === 'branches' && (
+        <section className="meta">
+          <RateLimitInfo rl={rl} />
+          <span className="meta-sep">·</span>
+          <CycleStatus cycle={branchSweep.cycle} fetched={Math.max(0, activeRepos.length - branchSweep.pending.length)} total={activeRepos.length} />
+          <span className="meta-sep grow">·</span>
+          <button className="restart" type="button" onClick={branchSweep.refreshNow} title="Re-queue all active repos for a fresh fetch">
+            Refresh now
+          </button>
+        </section>
+      )}
 
       <main>
-        <PrTable allRepos={activeRepos} results={sweep.results} inFlight={sweep.cycle.inFlight} />
+        {tab === 'prs' && (
+          <PrTable allRepos={activeRepos} results={sweep.results} inFlight={sweep.cycle.inFlight} />
+        )}
+        {tab === 'branches' && !authenticated && (
+          <div className="token-gate">
+            <p>Branches view requires authentication to access GitHub GraphQL API.</p>
+            <p className="muted">Please configure a GitHub Personal Access Token or connect via OAuth.</p>
+          </div>
+        )}
+        {tab === 'branches' && authenticated && (
+          <BranchTable allRepos={activeRepos} results={branchSweep.results} inFlight={branchSweep.cycle.inFlight} />
+        )}
       </main>
 
       <footer className="muted">
