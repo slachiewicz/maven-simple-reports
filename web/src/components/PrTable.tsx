@@ -118,14 +118,17 @@ export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
     writeHideEmpty(value)
   }
 
-  // Hide only fully-fetched repos with zero PRs. Keep pending and errored
-  // entries visible so the user can still see fetch state.
+  // Hide only fully-fetched repos that render no rows. This must apply the same
+  // author filter the rows themselves do — testing the raw prs array instead
+  // would leave every repo visible whose PRs all belong to a filtered-out
+  // author, showing a wall of "no open PRs" headers while the box is ticked.
+  // Pending and errored entries stay visible so fetch state is still legible.
   const visible = hideEmpty
     ? sorted.filter((repo) => {
         const r = results[repo]
         if (!r) return true
         if (r.error) return true
-        return r.prs.length > 0
+        return r.prs.some((p) => matchesAuthorFilter(p.authorClass, authorFilter))
       })
     : sorted
 
