@@ -74,8 +74,28 @@ jobs:
           echo "deploy-target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "Resolved: target=$TARGET is-main=$IS_MAIN"
 
+  test-spa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run tests
+        working-directory: ./web
+        run: |
+          npm ci
+          npm test
+
   build-spa:
     runs-on: ubuntu-latest
+    needs: test-spa
     env:
       VITE_GITHUB_CLIENT_ID: ${{ vars.VITE_GITHUB_CLIENT_ID }}
     steps:
