@@ -51,7 +51,9 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
 ### Pipeline
 
-1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com` directly with ETag/`If-None-Match` caching, serial request scheduling, and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the GraphQL client used by the Branches tab (the Pull requests tab stays on REST). Output: `web/dist/`.
+1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com` directly with ETag/`If-None-Match` caching, serial request scheduling, and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the GraphQL client. Output: `web/dist/`.
+
+   **Both APIs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so REST and GraphQL never fire concurrently. One consequence: the queue's backoff is global, so a REST 403 also stalls GraphQL even though they draw on separate GitHub budgets.
 2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
 3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA, copies it into `public/dependabot-prs/`, then runs `asciidoctor` on remaining `.adoc` files.
 4. **`.github/workflows/publish-reports.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
@@ -74,18 +76,91 @@ The full setup is documented in `web/README.adoc` (sections _Status_, _UI contro
 3. SPA on its origin verifies the CSRF token, POSTs `{code, code_verifier, redirect_uri}` to `/token-exchange`, which calls GitHub with the server-side `client_secret` added and returns the access + refresh tokens.
 4. Access tokens (~8 h) are refreshed transparently via `/token-refresh` before each fetch when their remaining lifetime is < 60 s.
 
-## Build status detection (SPA)
+## Fetching pull requests: two paths
 
-PR fetching is two-phase: a cheap inventory sweep lists each repo's open PRs first (fast first paint, `BuildState` defaults to `UNKNOWN`), then a separate enrichment sweep resolves build state per PR, keyed by head SHA (`repo#number#sha`) so a PR whose head hasn't moved is skipped on later cycles.
+**Which path runs depends solely on whether a token is present.** Both produce the
+same `PrResult` shape, so nothing downstream knows or cares which ran. In
+`views/PullRequestsView.tsx` all three sweeps are always constructed — React
+forbids conditional hooks — and are selected with `enabled`.
 
-The SPA derives a per-PR `BuildState` from both `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` and the legacy `GET /repos/{owner}/{repo}/commits/{sha}/status` (combined commit status, which is how Apache Jenkins reports plugin build results):
+### Authenticated → GraphQL (`lib/pullsGraphql.ts`)
+
+One query per repo returns the PRs *and* their `statusCheckRollup` together, so
+badges arrive with the row rather than a phase later. Measured at **~1 point per
+repo**, so a 98-repo sweep costs ~100 points against the 5 000/h budget — versus
+roughly 1 170 REST requests for the same data.
+
+`statusCheckRollup` natively rolls up check-runs *and* legacy commit statuses,
+which is what the REST path has to reconstruct by hand from two calls. It is
+therefore the more reliable of the two for the Apache Jenkins case.
+
+`mapRollupState` maps GitHub's `StatusState`: `SUCCESS` → `SUCCESS`;
+`FAILURE`/`ERROR` → `FAILURE`; `PENDING`/`EXPECTED` → `PENDING`; absent or
+unrecognised → `UNKNOWN`.
+
+### Anonymous → REST, two-phase (`lib/pulls.ts`)
+
+GitHub rejects anonymous GraphQL outright, so the REST path exists to keep the
+published dashboard viewable without a token on the 60 req/h budget. It is
+deliberately two-phase:
+
+1. **Inventory** — one `/pulls` call per repo, so the full table paints quickly
+   with `BuildState: 'UNKNOWN'`.
+2. **Enrichment** — a separate sweep resolving build state per PR, gated on
+   `sweep.pending.length === 0` so it never competes with inventory for the
+   shared queue. Keyed by head SHA (`repo#number#sha`), so an unmoved PR is
+   skipped on later cycles.
+
+The ordering is the point: enrichment is the dominant cost, and an anonymous
+visitor must get a usable table before their budget runs out. Enrichment is
+capped to `MAX_ENRICHED_PRS_PER_REPO` (10) newest PRs per repo — per repo rather
+than globally, so every repo shows some badges instead of later repos starving.
+
+`deriveBuildState` (REST path only) combines `/commits/{sha}/check-runs` with the
+legacy `/commits/{sha}/status`:
 
 - Any failed/timed-out/cancelled run or failed/error status → `FAILURE`
 - Otherwise any queued/in-progress run or pending status → `PENDING`
 - Otherwise any successful/neutral/skipped run or successful status → `SUCCESS`
 - Empty or all-other → `UNKNOWN`
 
-Merge-conflict detection (`/pulls/{n}.mergeable`) is not consulted. See `web/README.adoc` _Known limitations_.
+Merge-conflict detection (`/pulls/{n}.mergeable`) is not consulted. See
+`web/README.adoc` _Known limitations_.
+
+## Filtering (client-side, zero requests)
+
+Two segmented controls, both rendered by `components/SegmentedControl.tsx`
+(`role="radiogroup"`), filtering already-fetched data:
+
+- **Author** — All / Dependabot / People (`lib/authors.ts`). Bot-ness comes from
+  the API's `type` field, never from pattern-matching the login, so a user called
+  `robotics-fan` is not misfiled. "People" excludes *all* bots, so
+  `dependabot + people` is usually less than `all`.
+- **Draft** — All / Ready / Draft (`lib/prFilters.ts`).
+
+Each control's counts are computed with the *other* filter already applied, so a
+count states what clicking it would actually yield.
+
+> **Trap, shipped and fixed twice.** `PrTable`'s "hide repos without PRs" test and
+> its row rendering MUST use the same predicate — `matchesFilters()`. When they
+> drifted, repos whose PRs were all filtered out stayed visible as a wall of
+> empty "no open PRs" headers while the box was ticked. Any new filter must go
+> into `matchesFilters()`, not into the row rendering alone.
+
+## Caching (`lib/cache.ts`)
+
+| Namespace | Storage | Notes |
+|---|---|---|
+| `gh-cache:` | sessionStorage | ETag bodies; kept out of localStorage so they don't eat the ~5 MB budget |
+| `gh-result:v2:` | localStorage | Per-repo `PrResult`; v1 entries are reclaimed by `migrateLegacyCache` |
+| `gh-build:v1` | localStorage | **One blob**, not a key per PR; 7-day TTL, pruned on write since head-SHA keys accumulate |
+| `gh-branches:v1:` | localStorage | Per-repo branch results |
+| `gh-default-branch:v1:` | localStorage | 7-day TTL; avoids a second GraphQL round-trip per repo |
+
+Writers fail open so the app keeps working, but they now warn once per key via
+`reportQuotaFailure` instead of swallowing the error. That silence mattered: when
+the quota fills, `writeArchived` stops sticking and every cycle pays an extra
+call per repo — doubling REST cost invisibly and permanently.
 
 ## Integration with Parent Project
 
