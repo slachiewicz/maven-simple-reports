@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { migrateLegacyCache, readBuildStates, writeBuildStates } from './cache'
+import { migrateLegacyCache, readBuildStates, readDraftFilter, writeBuildStates } from './cache'
 
 // The suite runs under environment: 'node' (see vitest.config.ts), so there is
 // no localStorage global. Provide a minimal in-memory stub sufficient for the
@@ -105,6 +105,18 @@ describe('writeBuildStates', () => {
     writeBuildStates({ 'repo#1#sha': { state: 'PENDING', fetchedAt: now } })
 
     expect(readBuildStates()).toEqual({ 'repo#1#sha': { state: 'PENDING', fetchedAt: now } })
+  })
+})
+
+describe('readDraftFilter', () => {
+  it('returns "all" when nothing is stored yet', () => {
+    expect(readDraftFilter()).toBe('all')
+  })
+
+  it('returns "all" for a garbage stored value', () => {
+    fakeLocalStorage.setItem('gh-draft-filter:v1', 'bogus')
+
+    expect(readDraftFilter()).toBe('all')
   })
 })
 

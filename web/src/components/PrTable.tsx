@@ -19,6 +19,7 @@ import type { PullRequestInfo, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
+import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
 import { StatusBadge } from './StatusBadge'
 
 const STALE_THRESHOLD_MS = 60 * 60_000
@@ -83,14 +84,24 @@ function countBuildStates(prs: PullRequestInfo[]): BuildCounts {
   return c
 }
 
+// Single combined predicate shared by the hideEmpty test below and the row
+// rendering in RepoRows. Both MUST use the exact same predicate — if they
+// ever drift, repos whose PRs are all filtered out render as empty "no open
+// PRs" headers while "hide repos without PRs" is ticked (a bug shipped and
+// fixed once already).
+function matchesFilters(pr: PullRequestInfo, authorFilter: AuthorFilter, draftFilter: DraftFilter): boolean {
+  return matchesAuthorFilter(pr.authorClass, authorFilter) && matchesDraftFilter(pr.isDraft, draftFilter)
+}
+
 interface Props {
   allRepos: readonly string[]
   results: Record<string, PrResult>
   inFlight: string | null
   authorFilter: AuthorFilter
+  draftFilter: DraftFilter
 }
 
-export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
+export function PrTable({ allRepos, results, inFlight, authorFilter, draftFilter }: Props) {
   const sorted = [...allRepos].sort((a, b) => a.localeCompare(b))
   // Explicit per-repo overrides. Missing key → default: expanded iff the repo
   // has at least one PR.
@@ -119,16 +130,17 @@ export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
   }
 
   // Hide only fully-fetched repos that render no rows. This must apply the same
-  // author filter the rows themselves do — testing the raw prs array instead
-  // would leave every repo visible whose PRs all belong to a filtered-out
-  // author, showing a wall of "no open PRs" headers while the box is ticked.
+  // combined author+draft predicate the rows themselves do (matchesFilters) —
+  // testing the raw prs array instead would leave every repo visible whose PRs
+  // all belong to a filtered-out author/draft state, showing a wall of "no open
+  // PRs" headers while the box is ticked.
   // Pending and errored entries stay visible so fetch state is still legible.
   const visible = hideEmpty
     ? sorted.filter((repo) => {
         const r = results[repo]
         if (!r) return true
         if (r.error) return true
-        return r.prs.some((p) => matchesAuthorFilter(p.authorClass, authorFilter))
+        return r.prs.some((p) => matchesFilters(p, authorFilter, draftFilter))
       })
     : sorted
 
@@ -183,6 +195,7 @@ export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
               collapsed={isCollapsed(repo)}
               onToggle={() => toggle(repo)}
               authorFilter={authorFilter}
+              draftFilter={draftFilter}
             />
           ))}
         </tbody>
@@ -198,13 +211,14 @@ interface RepoRowsProps {
   collapsed: boolean
   onToggle: () => void
   authorFilter: AuthorFilter
+  draftFilter: DraftFilter
 }
 
-function RepoRows({ repo, result, isInFlight, collapsed, onToggle, authorFilter }: RepoRowsProps) {
+function RepoRows({ repo, result, isInFlight, collapsed, onToggle, authorFilter, draftFilter }: RepoRowsProps) {
   const repoUrl = `https://github.com/${MAVEN_OWNER}/${repo}/pulls`
   const prs = result
     ? result.prs
-        .filter((p) => matchesAuthorFilter(p.authorClass, authorFilter))
+        .filter((p) => matchesFilters(p, authorFilter, draftFilter))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     : []
   const counts = countBuildStates(prs)

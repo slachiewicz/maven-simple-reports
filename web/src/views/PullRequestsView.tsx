@@ -23,13 +23,18 @@ import {
   readAllResults,
   readAuthorFilter,
   readBuildStates,
+  readDraftFilter,
   writeAuthorFilter,
   writeBuildStates,
+  writeDraftFilter,
 } from '../lib/cache'
 import type { AuthorFilter } from '../lib/authors'
+import { matchesAuthorFilter } from '../lib/authors'
+import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
 import type { PrResult, PullRequestInfo } from '../lib/types'
 import { PrTable } from '../components/PrTable'
 import { AuthorFilterControl } from '../components/AuthorFilter'
+import { SegmentedControl } from '../components/SegmentedControl'
 
 // 30 min between full cycles when unauthenticated (60/h budget); 5 min when a PAT
 // is configured (5 000/h budget). The interval is read at the start of each
@@ -43,6 +48,12 @@ const PER_REPO_SPACING_MS = 800
 // at, and older PRs still render (with an unknown badge) at no request cost.
 const MAX_ENRICHED_PRS_PER_REPO = 10
 
+const DRAFT_OPTIONS: Array<{ key: DraftFilter; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'ready', label: 'Ready' },
+  { key: 'draft', label: 'Draft' },
+]
+
 interface Props {
   activeRepos: readonly string[]
   getToken: () => Promise<string | undefined>
@@ -52,6 +63,7 @@ interface Props {
 
 export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEpoch }: Props) {
   const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
+  const [draftFilter, setDraftFilterState] = useState<DraftFilter>(() => readDraftFilter())
 
   // Hydrate from any prior tab's persisted results so a freshly opened tab
   // shows data instantly (even before its own fetch completes). Also run the
@@ -195,19 +207,39 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     [activeResults, activeRepoSet],
   )
 
+  // Each control's counts describe what selecting that option would actually
+  // yield, so they're computed with the OTHER filter already applied — author
+  // counts over PRs matching the current draftFilter, and vice versa.
   const authorCounts = useMemo(() => {
     const counts: Record<AuthorFilter, number> = { all: 0, dependabot: 0, humans: 0 }
     for (const pr of allPrs) {
+      if (!matchesDraftFilter(pr.isDraft, draftFilter)) continue
       counts.all++
       if (pr.authorClass === 'dependabot') counts.dependabot++
       else if (pr.authorClass === 'human') counts.humans++
     }
     return counts
-  }, [allPrs])
+  }, [allPrs, draftFilter])
+
+  const draftCounts = useMemo(() => {
+    const counts: Record<DraftFilter, number> = { all: 0, ready: 0, draft: 0 }
+    for (const pr of allPrs) {
+      if (!matchesAuthorFilter(pr.authorClass, authorFilter)) continue
+      counts.all++
+      if (pr.isDraft) counts.draft++
+      else counts.ready++
+    }
+    return counts
+  }, [allPrs, authorFilter])
 
   const setAuthorFilter = (next: AuthorFilter) => {
     setAuthorFilterState(next)
     writeAuthorFilter(next)
+  }
+
+  const setDraftFilter = (next: DraftFilter) => {
+    setDraftFilterState(next)
+    writeDraftFilter(next)
   }
 
   const visibleResults = useMemo(
@@ -224,6 +256,12 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
         value={authorFilter}
         onChange={setAuthorFilter}
         counts={authorCounts}
+      />
+      <SegmentedControl
+        value={draftFilter}
+        onChange={setDraftFilter}
+        ariaLabel="Filter pull requests by draft status"
+        options={DRAFT_OPTIONS.map((opt) => ({ ...opt, count: draftCounts[opt.key] }))}
       />
 
       <section className="meta">
@@ -259,6 +297,7 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
         results={activeResults}
         inFlight={activeSweep.cycle.inFlight}
         authorFilter={authorFilter}
+        draftFilter={draftFilter}
       />
     </>
   )

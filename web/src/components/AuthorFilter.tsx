@@ -15,6 +15,7 @@
  */
 
 import type { AuthorFilter } from '../lib/authors'
+import { SegmentedControl } from './SegmentedControl'
 
 interface Props {
   value: AuthorFilter
@@ -30,18 +31,11 @@ const OPTIONS: Array<{ key: AuthorFilter; label: string }> = [
 
 export function AuthorFilterControl({ value, onChange, counts }: Props) {
   return (
-    <div className="author-filter" role="group" aria-label="Filter pull requests by author">
-      {OPTIONS.map((opt) => (
-        <button
-          key={opt.key}
-          type="button"
-          className={`author-filter-btn${value === opt.key ? ' author-filter-btn-active' : ''}`}
-          aria-pressed={value === opt.key}
-          onClick={() => onChange(opt.key)}
-        >
-          {opt.label} <span className="muted">({counts[opt.key]})</span>
-        </button>
-      ))}
-    </div>
+    <SegmentedControl
+      value={value}
+      onChange={onChange}
+      ariaLabel="Filter pull requests by author"
+      options={OPTIONS.map((opt) => ({ ...opt, count: counts[opt.key] }))}
+    />
   )
 }

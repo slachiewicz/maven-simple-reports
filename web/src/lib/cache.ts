@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { DraftFilter } from './prFilters'
+
 const PREFIX = 'gh-cache:v1:'
 const RESULT_PREFIX = 'gh-result:v2:'
 const LEGACY_RESULT_PREFIXES = ['gh-result:v1:']
@@ -24,6 +26,7 @@ const TOKEN_PERSIST_KEY = 'gh-token-persist:v1'
 const HIDE_EMPTY_KEY = 'gh-hide-empty:v1'
 const OAUTH_KEY = 'gh-oauth:v1'
 const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
+const DRAFT_FILTER_KEY = 'gh-draft-filter:v1'
 const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
 const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
 const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
@@ -333,6 +336,24 @@ export function writeAuthorFilter(filter: 'dependabot' | 'humans' | 'all'): void
     localStorage.setItem(AUTHOR_FILTER_KEY, filter)
   } catch {
     // ignore
+  }
+}
+
+export function readDraftFilter(): DraftFilter {
+  try {
+    const raw = localStorage.getItem(DRAFT_FILTER_KEY)
+    if (raw === 'all' || raw === 'ready' || raw === 'draft') return raw
+    return 'all'
+  } catch {
+    return 'all'
+  }
+}
+
+export function writeDraftFilter(filter: DraftFilter): void {
+  try {
+    localStorage.setItem(DRAFT_FILTER_KEY, filter)
+  } catch (err) {
+    reportQuotaFailure('draft filter', err)
   }
 }
 
