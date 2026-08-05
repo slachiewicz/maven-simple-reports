@@ -65,8 +65,8 @@ export function BranchTable({ allRepos, results, inFlight, staleOnly, thresholdD
       {inFlight && <p className="muted">Fetching {inFlight}…</p>}
       {truncated.length > 0 && (
         <p className="muted">
-          {truncated.length} repo{truncated.length === 1 ? '' : 's'} have more than 100 branches;
-          showing the first 100 of each ({truncated.join(', ')}).
+          {truncated.length} {truncated.length === 1 ? 'repo has' : 'repos have'} more than 100
+          branches; showing the first 100 of each ({truncated.join(', ')}).
         </p>
       )}
       {degraded.length > 0 && (
