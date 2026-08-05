@@ -26,6 +26,20 @@ interface Props {
   thresholdDays: number
 }
 
+// Absolute commit timestamp in the viewer's locale and zone. GraphQL returns
+// committedDate in UTC, so the bare ISO date could be a day out for anyone east
+// or west of it. Shown alongside the relative age, which is what you actually
+// scan when hunting abandoned branches.
+function formatCommitStamp(iso: string | null): string {
+  if (!iso) return 'unknown'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return 'unknown'
+  return `${d.toLocaleDateString('sv-SE')} ${d.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
+}
+
 function formatAge(iso: string | null): string {
   if (!iso) return 'unknown'
   const days = Math.floor((Date.now() - Date.parse(iso)) / (24 * 60 * 60 * 1000))
@@ -127,7 +141,8 @@ function BranchRow({ branch }: { branch: BranchInfo }) {
         </a>
       </td>
       <td className="nowrap" title={branch.lastCommitDate ?? undefined}>
-        {formatAge(branch.lastCommitDate)}
+        {formatCommitStamp(branch.lastCommitDate)}
+        <span className="muted"> · {formatAge(branch.lastCommitDate)}</span>
       </td>
       <td className="nowrap">{branch.lastCommitAuthor ?? '—'}</td>
       <td className="nowrap">

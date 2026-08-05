@@ -23,8 +23,15 @@ import { StatusBadge } from './StatusBadge'
 
 const STALE_THRESHOLD_MS = 60 * 60_000
 
+// Date and time in the viewer's locale and zone. GitHub returns UTC, so the
+// bare ISO date alone could be a day out for anyone east or west of it.
 function formatPrDate(iso: string): string {
-  return iso.slice(0, 10)
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  return `${d.toLocaleDateString('sv-SE')} ${d.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
 }
 
 function formatFetchedAt(ms: number): string {
@@ -286,7 +293,9 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
           {pr.author}
         </a>
       </td>
-      <td className="nowrap">{formatPrDate(pr.createdAt)}</td>
+      <td className="nowrap" title={`Opened ${pr.createdAt}`}>
+        {formatPrDate(pr.createdAt)}
+      </td>
       <td>
         <a href={pr.checksUrl} target="_blank" rel="noreferrer">
           <StatusBadge state={pr.buildState} />
