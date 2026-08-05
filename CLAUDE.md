@@ -62,6 +62,29 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 - `scripts/` — Python and shell scripts
 - `public/` — published site root; only `index.html` is git-tracked (the rest is generated)
 - `.github/workflows/` — CI/CD
+- `.agents/skills/` — agent skills, tracked; see below
+
+### Agent skills need re-linking after a clone
+
+`.agents/skills/` is tracked, but Claude Code reads skills from `.claude/skills/`,
+and `.claude/` is gitignored — so a fresh clone has the skills without the wiring
+and Claude will not see them. Re-create the symlinks once:
+
+```bash
+mkdir -p .claude/skills
+for s in .agents/skills/*/; do
+  ln -sfn "../../$s" ".claude/skills/$(basename "$s")"
+done
+```
+
+`npx skills add <source>` also re-creates them for skills it installs, but not for
+`maven-reports-spa`, which is hand-written and has no upstream source.
+
+`maven-reports-spa` is the one worth reading before editing anything under
+`web/` — it records the traps that have already shipped as bugs here. The rest
+came from `vercel-labs/agent-skills`; the Vercel deployment and React Native ones
+were deliberately not installed, since this project deploys to GitHub Pages and
+Netlify and has no React Native.
 
 ### OAuth flow (browser ↔ Netlify Functions ↔ GitHub)
 
