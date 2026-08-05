@@ -14,3 +14,6 @@ data/
 
 # Netlify Functions deps — installed by CI before deploy
 netlify/node_modules/
+
+# Installed dependencies anywhere (web/, and any stray root install)
+node_modules/
