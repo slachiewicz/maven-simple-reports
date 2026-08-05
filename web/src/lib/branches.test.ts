@@ -14,366 +14,129 @@
  * limitations under the License.
  */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { cacheDefaultBranch, getCachedDefaultBranch, fetchRepoBranches } from './branches'
+import { describe, expect, it } from 'vitest'
+import { isStaleBranch, mapRefNode } from './branches'
+import type { BranchInfo } from './types'
 
-global.fetch = vi.fn()
-const localStorageMock = (() => {
-  let store: Record<string, string> = {}
+const DAY = 24 * 60 * 60 * 1000
+const NOW = Date.parse('2026-08-04T00:00:00Z')
+
+function node(overrides: Record<string, unknown> = {}) {
   return {
-    getItem: (key: string) => store[key] ?? null,
-    setItem: (key: string, value: string) => {
-      store[key] = value
+    name: 'feature/old-thing',
+    target: {
+      oid: 'abc123',
+      committedDate: '2025-01-01T00:00:00Z',
+      author: { user: { login: 'someone' }, name: 'Some One' },
     },
-    removeItem: (key: string) => {
-      delete store[key]
-    },
-    clear: () => {
-      store = {}
-    },
-  }
-})()
-
-Object.defineProperty(global, 'localStorage', {
-  value: localStorageMock,
-})
-
-describe('branch caching utilities', () => {
-  beforeEach(() => {
-    localStorageMock.clear()
-    vi.clearAllMocks()
-  })
-
-  afterEach(() => {
-    localStorageMock.clear()
-  })
-
-  it('caches and retrieves default branch names', () => {
-    cacheDefaultBranch('maven-core', 'master')
-    expect(getCachedDefaultBranch('maven-core')).toBe('master')
-  })
-
-  it('returns null for uncached repositories', () => {
-    expect(getCachedDefaultBranch('maven-plugin')).toBeNull()
-  })
-
-  it('handles localStorage errors gracefully', () => {
-    const originalGetItem = localStorageMock.getItem
-    localStorageMock.getItem = () => {
-      throw new Error('localStorage error')
-    }
-
-    expect(getCachedDefaultBranch('maven-wrapper')).toBeNull()
-    localStorageMock.getItem = originalGetItem
-  })
-})
-
-describe('GraphQL branch data conversion', () => {
-  it('converts branch data to BranchInfo correctly', () => {
-    const mockBranch = {
-      name: 'feature/test',
-      target: {
-        oid: 'abc123',
-        committedDate: '2024-01-15T10:30:00Z',
-        author: {
-          user: { login: 'username' },
-          name: 'User Name',
-        },
-      },
-      associatedPullRequests: { totalCount: 2 },
-      compare: { aheadBy: 3, behindBy: 1 },
-      refUpdateRule: { requiredApprovingReviewCount: 2, allowsForcePushes: false },
-    }
-
-    const result = convertToBranchInfoTest('maven-core', mockBranch, 'main')
-    expect(result.repo).toBe('maven-core')
-    expect(result.name).toBe('feature/test')
-    expect(result.lastCommitDate).toBe('2024-01-15T10:30:00Z')
-    expect(result.lastCommitAuthor).toBe('username')
-    expect(result.headSha).toBe('abc123')
-    expect(result.isProtected).toBe(true)
-    expect(result.openPrCount).toBe(2)
-    expect(result.aheadBy).toBe(1)
-    expect(result.behindBy).toBe(3)
-    expect(result.isDefault).toBe(false)
-  })
-
-  it('handles missing target and compare data', () => {
-    const mockBranch = {
-      name: 'orphan',
-      target: null,
-      associatedPullRequests: { totalCount: 0 },
-      compare: null,
-      refUpdateRule: null,
-    }
-
-    const result = convertToBranchInfoTest('maven-archiver', mockBranch, 'main')
-    expect(result.lastCommitDate).toBeNull()
-    expect(result.lastCommitAuthor).toBeNull()
-    expect(result.headSha).toBe('')
-    expect(result.aheadBy).toBeNull()
-    expect(result.behindBy).toBeNull()
-  })
-
-  it('identifies default branch correctly', () => {
-    const mockBranch = {
-      name: 'main',
-      target: {
-        oid: 'def456',
-        committedDate: '2024-01-01T00:00:00Z',
-        author: {
-          user: { login: 'system' },
-          name: 'System',
-        },
-      },
-      associatedPullRequests: { totalCount: 0 },
-      compare: { aheadBy: 0, behindBy: 0 },
-      refUpdateRule: null,
-    }
-
-    const result = convertToBranchInfoTest('maven-build', mockBranch, 'main')
-    expect(result.isDefault).toBe(true)
-  })
-
-  it('inverts GraphQL compare direction', () => {
-    const mockBranch = {
-      name: 'ahead-by-two',
-      target: {
-        oid: 'ghi789',
-        committedDate: '2024-01-20T15:00:00Z',
-        author: {
-          user: { login: 'dev' },
-          name: 'Developer',
-        },
-      },
-      associatedPullRequests: { totalCount: 1 },
-      compare: { aheadBy: 2, behindBy: 0 },
-      refUpdateRule: null,
-    }
-
-    const result = convertToBranchInfoTest('maven-tests', mockBranch, 'main')
-    expect(result.aheadBy).toBe(0)
-    expect(result.behindBy).toBe(2)
-  })
-})
-
-describe('fetchRepoBranches', () => {
-  beforeEach(() => {
-    localStorageMock.clear()
-    vi.clearAllMocks()
-    vi.stubGlobal('Date', class extends Date {
-      constructor() {
-        super()
-        return new Date('2024-08-04T00:00:00Z')
-      }
-    })
-  })
-
-  afterEach(() => {
-    localStorageMock.clear()
-    vi.useRealTimers()
-  })
-
-  it('fetches branches successfully with token', async () => {
-    const mockGraphqlResponse = {
-      data: {
-        repository: {
-          isArchived: false,
-          defaultBranchRef: { name: 'main' },
-          refs: {
-            totalCount: 3,
-            nodes: [
-              {
-                name: 'feature-a',
-                target: {
-                  oid: 'abc123',
-                  committedDate: '2024-01-01T00:00:00Z',
-                  author: { user: { login: 'user1' }, name: 'User One' },
-                },
-                associatedPullRequests: { totalCount: 1 },
-                compare: { aheadBy: 5, behindBy: 2 },
-                refUpdateRule: null,
-              },
-              {
-                name: 'feature-b',
-                target: {
-                  oid: 'def456',
-                  committedDate: '2024-01-02T00:00:00Z',
-                  author: { user: { login: 'user2' }, name: 'User Two' },
-                },
-                associatedPullRequests: { totalCount: 0 },
-                compare: { aheadBy: 3, behindBy: 1 },
-                refUpdateRule: null,
-              },
-              {
-                name: 'main',
-                target: {
-                  oid: 'ghi789',
-                  committedDate: '2023-12-01T00:00:00Z',
-                  author: { user: { login: 'system' }, name: 'System' },
-                },
-                associatedPullRequests: { totalCount: 0 },
-                compare: { aheadBy: 0, behindBy: 0 },
-                refUpdateRule: { requiredApprovingReviewCount: 1, allowsForcePushes: false },
-              },
-            ],
-          },
-        },
-        rateLimit: { cost: 3, remaining: 4950, resetAt: '2024-08-04T01:00:00Z' },
-      },
-    }
-
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => mockGraphqlResponse,
-    } as Response)
-
-    const result = await fetchRepoBranches('maven-core', { token: 'test-token' })
-
-    expect(result.repo).toBe('maven-core')
-    expect(result.branches).toHaveLength(3)
-    expect(result.defaultBranch).toBe('main')
-    expect(result.totalCount).toBe(3)
-    expect(result.truncated).toBe(false)
-    expect(result.degraded).toBe(false)
-  })
-
-  it('detects truncation when totalCount exceeds limit', async () => {
-    const mockDefaultBranchResponse = {
-      data: {
-        repository: { defaultBranchRef: { name: 'main' } },
-      },
-    }
-
-    const mockBranchesResponse = {
-      data: {
-        repository: {
-          isArchived: false,
-          defaultBranchRef: { name: 'main' },
-          refs: {
-            totalCount: 150,
-            nodes: [],
-          },
-        },
-        rateLimit: { cost: 3, remaining: 4950, resetAt: '2024-08-04T01:00:00Z' },
-      },
-    }
-
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockDefaultBranchResponse,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockBranchesResponse,
-      } as Response)
-
-    const result = await fetchRepoBranches('maven-plugin', { token: 'test-token' })
-    expect(result.truncated).toBe(true)
-  })
-
-  it('returns archived status for archived repositories', async () => {
-    const mockDefaultBranchResponse = {
-      data: {
-        repository: { defaultBranchRef: { name: 'main' } },
-      },
-    }
-
-    const mockBranchesResponse = {
-      data: {
-        repository: {
-          isArchived: true,
-          defaultBranchRef: { name: 'main' },
-          refs: {
-            totalCount: 0,
-            nodes: [],
-          },
-        },
-        rateLimit: { cost: 1, remaining: 4980, resetAt: '2024-08-04T01:00:00Z' },
-      },
-    }
-
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockDefaultBranchResponse,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockBranchesResponse,
-      } as Response)
-
-    const result = await fetchRepoBranches('maven-old', { token: 'test-token' })
-    expect(result.archived).toBe(true)
-    expect(result.branches).toHaveLength(0)
-  })
-
-  it('handles GraphQL errors gracefully', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        errors: [{ message: 'Field "ref" is invalid' }],
-      }),
-    } as Response)
-
-    const result = await fetchRepoBranches('invalid-repo', { token: 'test-token' })
-    expect(result.degraded).toBe(true)
-    expect(result.error).toContain('GraphQL errors')
-    expect(result.branches).toHaveLength(0)
-  })
-
-  it('handles missing default branch', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ data: {} }),
-    } as Response)
-
-    const result = await fetchRepoBranches('maven-core', { token: '' })
-    expect(result.error).toBe('Could not determine default branch')
-    expect(result.branches).toHaveLength(0)
-  })
-})
-
-function convertToBranchInfoTest(
-  repo: string,
-  branch: {
-    name: string
-    target?: { oid: string; committedDate: string; author: { user?: { login: string } | null; name: string } } | null
-    associatedPullRequests?: { totalCount: number }
-    compare?: { aheadBy: number; behindBy: number } | null
-    refUpdateRule?: { requiredApprovingReviewCount: number; allowsForcePushes: boolean } | null
-  },
-  defaultBranch: string | null,
-): {
-  repo: string
-  name: string
-  lastCommitDate: string | null
-  lastCommitAuthor: string | null
-  headSha: string
-  isProtected: boolean
-  openPrCount: number
-  aheadBy: number | null
-  behindBy: number | null
-  isDefault: boolean
-} {
-  return {
-    repo,
-    name: branch.name,
-    lastCommitDate: branch.target?.committedDate ?? null,
-    lastCommitAuthor: branch.target?.author.user?.login ?? null,
-    headSha: branch.target?.oid ?? '',
-    isProtected: !!branch.refUpdateRule,
-    openPrCount: branch.associatedPullRequests?.totalCount ?? 0,
-    aheadBy: branch.compare?.behindBy ?? null,
-    behindBy: branch.compare?.aheadBy ?? null,
-    isDefault: branch.name === defaultBranch,
+    associatedPullRequests: { totalCount: 0 },
+    compare: { aheadBy: 40, behindBy: 3 },
+    refUpdateRule: null,
+    ...overrides,
   }
 }
+
+function branch(overrides: Partial<BranchInfo> = {}): BranchInfo {
+  return {
+    repo: 'maven-compiler-plugin',
+    name: 'feature/old-thing',
+    lastCommitDate: new Date(NOW - 200 * DAY).toISOString(),
+    lastCommitAuthor: 'someone',
+    headSha: 'abc123',
+    isProtected: false,
+    openPrCount: 0,
+    aheadBy: 3,
+    behindBy: 40,
+    isDefault: false,
+    ...overrides,
+  }
+}
+
+describe('mapRefNode', () => {
+  // Ref.compare() treats the ref itself as the BASE and the argument as the
+  // HEAD. So compare(headRef: master) returns aheadBy = commits master has that
+  // this branch lacks, i.e. how far BEHIND this branch is. The mapping inverts
+  // once, here, and nothing downstream re-inverts.
+  it('inverts the compare direction so behindBy means behind the default branch', () => {
+    const b = mapRefNode('maven-compiler-plugin', 'master', node())
+    expect(b.behindBy).toBe(40)
+    expect(b.aheadBy).toBe(3)
+  })
+
+  it('leaves ahead/behind null when compare is absent', () => {
+    const b = mapRefNode('maven-compiler-plugin', 'master', node({ compare: null }))
+    expect(b.behindBy).toBeNull()
+    expect(b.aheadBy).toBeNull()
+  })
+
+  // branchProtectionRule requires repo admin, which we do not have on apache/*;
+  // it returns null for every branch. refUpdateRule is the non-admin view.
+  it('reads protection from refUpdateRule', () => {
+    expect(mapRefNode('r', 'master', node()).isProtected).toBe(false)
+    expect(
+      mapRefNode('r', 'master', node({ refUpdateRule: { allowsForcePushes: false } })).isProtected,
+    ).toBe(true)
+  })
+
+  it('marks the default branch', () => {
+    expect(mapRefNode('r', 'master', node({ name: 'master' })).isDefault).toBe(true)
+    expect(mapRefNode('r', 'master', node({ name: 'other' })).isDefault).toBe(false)
+  })
+
+  it('prefers the GitHub login over the raw git author name', () => {
+    expect(mapRefNode('r', 'master', node()).lastCommitAuthor).toBe('someone')
+  })
+
+  it('falls back to the git author name when there is no linked GitHub user', () => {
+    const b = mapRefNode(
+      'r',
+      'master',
+      node({
+        target: {
+          oid: 'abc',
+          committedDate: '2025-01-01T00:00:00Z',
+          author: { user: null, name: 'Unlinked Person' },
+        },
+      }),
+    )
+    expect(b.lastCommitAuthor).toBe('Unlinked Person')
+  })
+})
+
+describe('isStaleBranch', () => {
+  it('counts a branch older than the threshold as stale', () => {
+    expect(isStaleBranch(branch(), 90, NOW)).toBe(true)
+  })
+
+  it('does not count a recently committed branch as stale', () => {
+    const recent = branch({ lastCommitDate: new Date(NOW - 5 * DAY).toISOString() })
+    expect(isStaleBranch(recent, 90, NOW)).toBe(false)
+  })
+
+  it('excludes the default branch however old it is', () => {
+    expect(isStaleBranch(branch({ isDefault: true }), 90, NOW)).toBe(false)
+  })
+
+  it('excludes protected branches', () => {
+    expect(isStaleBranch(branch({ isProtected: true }), 90, NOW)).toBe(false)
+  })
+
+  it('excludes branches with an open pull request', () => {
+    expect(isStaleBranch(branch({ openPrCount: 1 }), 90, NOW)).toBe(false)
+  })
+
+  it('excludes branches with no commit date rather than guessing', () => {
+    expect(isStaleBranch(branch({ lastCommitDate: null }), 90, NOW)).toBe(false)
+  })
+
+  it('treats exactly the threshold age as stale', () => {
+    const exactly = branch({ lastCommitDate: new Date(NOW - 90 * DAY).toISOString() })
+    expect(isStaleBranch(exactly, 90, NOW)).toBe(true)
+  })
+
+  it('honours a changed threshold', () => {
+    const b = branch({ lastCommitDate: new Date(NOW - 30 * DAY).toISOString() })
+    expect(isStaleBranch(b, 90, NOW)).toBe(false)
+    expect(isStaleBranch(b, 14, NOW)).toBe(true)
+  })
+})

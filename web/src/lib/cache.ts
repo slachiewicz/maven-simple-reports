@@ -15,13 +15,19 @@
  */
 
 const PREFIX = 'gh-cache:v1:'
-const RESULT_PREFIX = 'gh-result:v1:'
+const RESULT_PREFIX = 'gh-result:v2:'
+const LEGACY_RESULT_PREFIXES = ['gh-result:v1:']
 const ARCHIVED_PREFIX = 'gh-archived:v1:'
 const FILTER_KEY = 'gh-filter:v1'
 const TOKEN_KEY = 'gh-token:v1'
 const TOKEN_PERSIST_KEY = 'gh-token-persist:v1'
 const HIDE_EMPTY_KEY = 'gh-hide-empty:v1'
 const OAUTH_KEY = 'gh-oauth:v1'
+const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
+const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
+const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
+const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
+const STALE_ONLY_KEY = 'gh-stale-only:v1'
 
 const ARCHIVED_TTL_MS = 7 * 24 * 60 * 60_000
 
@@ -93,7 +99,14 @@ export function clearAllCache(): number {
     const lsKeys: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (k && (k.startsWith(RESULT_PREFIX) || k.startsWith(ARCHIVED_PREFIX))) {
+      if (
+        k &&
+        (k.startsWith(RESULT_PREFIX) ||
+          k.startsWith(ARCHIVED_PREFIX) ||
+          k.startsWith(BRANCH_RESULT_PREFIX) ||
+          k.startsWith(DEFAULT_BRANCH_PREFIX) ||
+          LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))
+      ) {
         lsKeys.push(k)
       }
     }
@@ -278,6 +291,24 @@ export function writeResult<T>(repo: string, value: T): void {
   }
 }
 
+export function readAuthorFilter(): 'dependabot' | 'humans' | 'all' {
+  try {
+    const raw = localStorage.getItem(AUTHOR_FILTER_KEY)
+    if (raw === 'dependabot' || raw === 'humans' || raw === 'all') return raw
+    return 'all'
+  } catch {
+    return 'all'
+  }
+}
+
+export function writeAuthorFilter(filter: 'dependabot' | 'humans' | 'all'): void {
+  try {
+    localStorage.setItem(AUTHOR_FILTER_KEY, filter)
+  } catch {
+    // ignore
+  }
+}
+
 export function readAllResults<T>(): Record<string, T> {
   const out: Record<string, T> = {}
   try {
@@ -296,4 +327,95 @@ export function readAllResults<T>(): Record<string, T> {
     // ignore
   }
   return out
+}
+
+interface DefaultBranchEntry {
+  name: string
+  checkedAt: number
+}
+
+// The default branch name rarely changes, so cache it for the same 7-day TTL
+// used for archived-repo status rather than re-querying it on every fetch.
+export function readDefaultBranch(repo: string): string | null {
+  try {
+    const raw = localStorage.getItem(DEFAULT_BRANCH_PREFIX + repo)
+    if (!raw) return null
+    const entry = JSON.parse(raw) as DefaultBranchEntry
+    if (Date.now() - entry.checkedAt > ARCHIVED_TTL_MS) return null
+    return entry.name
+  } catch {
+    return null
+  }
+}
+
+export function writeDefaultBranch(repo: string, name: string): void {
+  try {
+    const entry: DefaultBranchEntry = { name, checkedAt: Date.now() }
+    localStorage.setItem(DEFAULT_BRANCH_PREFIX + repo, JSON.stringify(entry))
+  } catch {
+    // ignore
+  }
+}
+
+export function writeBranchResult<T>(repo: string, value: T): void {
+  try {
+    localStorage.setItem(BRANCH_RESULT_PREFIX + repo, JSON.stringify(value))
+  } catch {
+    // ignore
+  }
+}
+
+export function readAllBranchResults<T>(): Record<string, T> {
+  const out: Record<string, T> = {}
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k || !k.startsWith(BRANCH_RESULT_PREFIX)) continue
+      const raw = localStorage.getItem(k)
+      if (!raw) continue
+      try {
+        out[k.slice(BRANCH_RESULT_PREFIX.length)] = JSON.parse(raw) as T
+      } catch {
+        // skip malformed entries
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out
+}
+
+export function readStaleThreshold(): number {
+  try {
+    const raw = Number(localStorage.getItem(STALE_THRESHOLD_KEY))
+    if (Number.isFinite(raw) && raw > 0) return raw
+    return 90
+  } catch {
+    return 90
+  }
+}
+
+export function writeStaleThreshold(days: number): void {
+  try {
+    localStorage.setItem(STALE_THRESHOLD_KEY, String(days))
+  } catch {
+    // ignore
+  }
+}
+
+export function readStaleOnly(): boolean {
+  try {
+    // Default true — the view exists to surface stale branches.
+    return localStorage.getItem(STALE_ONLY_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function writeStaleOnly(value: boolean): void {
+  try {
+    localStorage.setItem(STALE_ONLY_KEY, value ? '1' : '0')
+  } catch {
+    // ignore
+  }
 }

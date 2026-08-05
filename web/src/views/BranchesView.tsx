@@ -1,0 +1,144 @@
+/*
+ * Copyright 2026 The Apache Software Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { useEffect, useMemo, useState } from 'react'
+import { useSweep } from '../lib/useSweep'
+import { fetchRepoBranches } from '../lib/branches'
+import {
+  readAllBranchResults,
+  readStaleOnly,
+  readStaleThreshold,
+  writeStaleOnly,
+  writeStaleThreshold,
+} from '../lib/cache'
+import type { RepoBranchResult } from '../lib/types'
+import { BranchTable } from '../components/BranchTable'
+
+// GraphQL costs ~3-6 points per repo against a 5 000/h budget, so a 10 min
+// cadence leaves comfortable headroom for ~98 repos.
+const BRANCH_CYCLE_INTERVAL_MS = 10 * 60_000
+
+interface Props {
+  activeRepos: readonly string[]
+  getToken: () => Promise<string | undefined>
+  hasToken: boolean
+  tokenEpoch: number
+}
+
+export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Props) {
+  const [staleOnly, setStaleOnlyState] = useState<boolean>(() => readStaleOnly())
+  const [threshold, setThresholdState] = useState<number>(() => readStaleThreshold())
+
+  const initialResults = useMemo(() => readAllBranchResults<RepoBranchResult>(), [])
+
+  const sweep = useSweep<RepoBranchResult>({
+    items: activeRepos,
+    fetchOne: (repo, token) => fetchRepoBranches(repo, token),
+    getToken,
+    intervalMs: BRANCH_CYCLE_INTERVAL_MS,
+    enabled: hasToken,
+    initialResults,
+  })
+
+  // A token saved or replaced mid-sleep must resume immediately rather than
+  // waiting out the current interval or a rate-limit pause; the enabled
+  // false→true transition only covers going from no-token to token.
+  useEffect(() => {
+    if (tokenEpoch === 0) return
+    sweep.wake()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wake on credential change only
+  }, [tokenEpoch])
+
+  const setStaleOnly = (v: boolean) => {
+    setStaleOnlyState(v)
+    writeStaleOnly(v)
+  }
+
+  const setThreshold = (days: number) => {
+    setThresholdState(days)
+    writeStaleThreshold(days)
+  }
+
+  if (!hasToken) {
+    return (
+      <div className="signin-prompt">
+        <h2>A GitHub token is required</h2>
+        <p>
+          The branches view uses GitHub's GraphQL API, which rejects
+          unauthenticated requests. Open <strong>Settings</strong> above and
+          either connect with GitHub or paste a personal access token — no scopes
+          are needed for public repositories.
+        </p>
+        <p className="muted">
+          The pull requests tab keeps working without a token.
+        </p>
+      </div>
+    )
+  }
+
+  const fetchedCount = useMemo(
+    () => activeRepos.filter((r) => sweep.results[r] !== undefined).length,
+    [activeRepos, sweep.results],
+  )
+
+  return (
+    <>
+      <div className="branch-controls">
+        <label>
+          <input
+            type="checkbox"
+            checked={staleOnly}
+            onChange={(e) => setStaleOnly(e.target.checked)}
+          />{' '}
+          Stale only
+        </label>
+        <label>
+          Older than{' '}
+          <input
+            className="branch-threshold"
+            type="number"
+            min={1}
+            max={3650}
+            value={threshold}
+            disabled={!staleOnly}
+            onChange={(e) => {
+              const n = Number(e.target.value)
+              if (Number.isFinite(n) && n > 0) setThreshold(n)
+            }}
+          />{' '}
+          days
+        </label>
+        <span className="muted">
+          {fetchedCount}/{activeRepos.length} repos fetched
+        </span>
+        <button type="button" className="restart" onClick={sweep.refreshNow}>
+          Refresh now
+        </button>
+      </div>
+      <p className="muted">
+        Excludes the default branch, protected branches, and branches with an open
+        pull request.
+      </p>
+      <BranchTable
+        allRepos={activeRepos}
+        results={sweep.results}
+        inFlight={sweep.cycle.inFlight}
+        staleOnly={staleOnly}
+        thresholdDays={threshold}
+      />
+    </>
+  )
+}

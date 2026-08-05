@@ -60,6 +60,9 @@ describe('matchesAuthorFilter', () => {
     expect(matchesAuthorFilter('human', 'dependabot')).toBe(false)
   })
 
+  // Non-dependabot bots are deliberately excluded from "humans": that filter
+  // means people, and renovate/github-actions are not people. They remain
+  // reachable under "all".
   it('passes only humans under humans, excluding all bots', () => {
     expect(matchesAuthorFilter('human', 'humans')).toBe(true)
     expect(matchesAuthorFilter('bot', 'humans')).toBe(false)

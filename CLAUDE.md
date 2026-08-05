@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **supporting project** (not an MCP server) that publishes reports and statistics about Apache Maven repository pull requests. The primary purpose is to track the status of open PRs across ~93 Apache Maven repositories, with focus on Dependabot PRs and their CI/CD build statuses.
+This is a **supporting project** (not an MCP server) that publishes reports and statistics about Apache Maven repository pull requests and branches. The primary purpose is to track the status of open PRs (all authors, not just Dependabot) and stale branches across ~98 Apache Maven repositories.
 
 **Key outputs:**
-- A static **single-page dashboard** (`web/`) that calls the GitHub REST API directly from the browser to show open Dependabot PRs with live build status. This replaces the previous Python-generated `dependabot-prs.html`.
+- A static **single-page dashboard** (`web/`) with two tabs: *Pull requests* (all open PRs, any author, with live build status, via the GitHub REST API) and *Branches* (stale-branch detection, via the GitHub GraphQL API, requires a token). This replaces the previous Python-generated `dependabot-prs.html`.
 - Reports published to GitHub Pages (main) and Netlify (PRs/branches) on push.
 
 Further Python-based reports may live under `scripts/` in the future.
@@ -29,6 +29,7 @@ npm install
 npm run dev          # http://localhost:5173/maven-simple-reports/dependabot-prs/
 npm run build        # production build into web/dist/
 npm run typecheck    # tsc -b --noEmit
+npm test             # vitest run — pure logic in src/lib/*.test.ts only
 ```
 
 See `web/README.adoc` for architecture, rate-limit handling, and roadmap.
@@ -50,7 +51,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
 ### Pipeline
 
-1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com` directly with ETag/`If-None-Match` caching, serial request scheduling, and 403/429 backoff. Output: `web/dist/`.
+1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com` directly with ETag/`If-None-Match` caching, serial request scheduling, and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the GraphQL client used by the Branches tab (the Pull requests tab stays on REST). Output: `web/dist/`.
 2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
 3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA, copies it into `public/dependabot-prs/`, then runs `asciidoctor` on remaining `.adoc` files.
 4. **`.github/workflows/publish-reports.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
@@ -75,14 +76,16 @@ The full setup is documented in `web/README.adoc` (sections _Status_, _UI contro
 
 ## Build status detection (SPA)
 
-The SPA derives a per-PR `BuildState` from `GET /repos/{owner}/{repo}/commits/{sha}/check-runs`:
+PR fetching is two-phase: a cheap inventory sweep lists each repo's open PRs first (fast first paint, `BuildState` defaults to `UNKNOWN`), then a separate enrichment sweep resolves build state per PR, keyed by head SHA (`repo#number#sha`) so a PR whose head hasn't moved is skipped on later cycles.
 
-- Any failed/timed-out/cancelled run → `FAILURE`
-- Otherwise any queued/in-progress run → `PENDING`
-- Otherwise any successful/neutral/skipped run → `SUCCESS`
+The SPA derives a per-PR `BuildState` from both `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` and the legacy `GET /repos/{owner}/{repo}/commits/{sha}/status` (combined commit status, which is how Apache Jenkins reports plugin build results):
+
+- Any failed/timed-out/cancelled run or failed/error status → `FAILURE`
+- Otherwise any queued/in-progress run or pending status → `PENDING`
+- Otherwise any successful/neutral/skipped run or successful status → `SUCCESS`
 - Empty or all-other → `UNKNOWN`
 
-Legacy commit statuses (`/commits/{sha}/status`) and merge-conflict detection (`/pulls/{n}.mergeable`) are not consulted yet. See `web/README.adoc` _Known limitations_.
+Merge-conflict detection (`/pulls/{n}.mergeable`) is not consulted. See `web/README.adoc` _Known limitations_.
 
 ## Integration with Parent Project
 

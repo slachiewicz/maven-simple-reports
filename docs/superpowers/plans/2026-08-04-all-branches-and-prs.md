@@ -227,10 +227,16 @@ export interface SweepResult<T> {
 
 export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const [results, setResults] = useState<Record<string, T>>(() => opts.initialResults ?? {})
-  const [pending, setPending] = useState<string[]>([])
+  const [pending, setPending] = useState<string[]>([...opts.items])
   const [cycle, setCycle] = useState<CycleState>(initialCycle)
 
-  const pendingRef = useRef<string[]>([])
+  // Seeded with every item, not empty: the old loop always re-verified all repos
+  // on load. See the mount guard in the items-changed effect below.
+  const pendingRef = useRef<string[]>([...opts.items])
+  // Last-seen itemsKey, not a boolean "did mount" flag: StrictMode dev-only
+  // double-invokes effects on mount, and a boolean would survive the synthetic
+  // remount and let the second run re-queue against the cache.
+  const lastItemsKeyRef = useRef<string | null>(null)
   const itemsRef = useRef<readonly string[]>(opts.items)
   const resultsRef = useRef<Record<string, T>>(results)
   const restartTokenRef = useRef(0)
@@ -256,6 +262,10 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
   const syncPending = () => setPending([...pendingRef.current])
 
   const wake = () => {
+    // Callers (updateToken/updateOauth) need the queue's own backoff lifted too,
+    // so a token saved during a rate-limit pause takes effect immediately rather
+    // than waiting out the anonymous reset.
+    clearQueueBackoff()
     restartTokenRef.current += 1
   }
 
@@ -275,9 +285,20 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
 
   // Item-set changes queue only what is not already fetched, matching the
   // filter-change behaviour the previous App.tsx had at lines 200-217.
-  const itemsKey = opts.items.join(' ')
+  const itemsKey = opts.items.join('\n')
   useEffect(() => {
     itemsRef.current = opts.items
+    // Idempotent under StrictMode's dev-only double-invoke: the second synthetic
+    // run carries the same itemsKey, so it exits here rather than re-queueing.
+    if (lastItemsKeyRef.current === itemsKey) return
+    const isFirstRun = lastItemsKeyRef.current === null
+    lastItemsKeyRef.current = itemsKey
+    // Mount: pendingRef is already seeded with every item, matching the old loop
+    // (App.tsx:106,110 seeded from initialActive unconditionally) which always
+    // re-verified all repos on load — ETag 304s make that cheap. Filtering here
+    // on mount would skip every repo holding a cached result, and persisted
+    // results carry no TTL, so a warm cache would fetch nothing at all.
+    if (isFirstRun) return
     const fetched = new Set(Object.keys(resultsRef.current))
     pendingRef.current = opts.items.filter((i) => !fetched.has(i))
     restartTokenRef.current += 1
@@ -948,7 +969,9 @@ and in `PrRow`, after the title cell:
       </td>
 ```
 
-Change the two `colSpan={4}` occurrences in the repo-header row to `colSpan={5}`.
+Change the `colSpan={4}` on the repo-header row to `colSpan={5}` so it still spans
+the full table now that Author is a fifth column. There is exactly one such
+occurrence in `PrTable.tsx`.
 
 Change the empty-state text at old line 231 from `· no Dependabot PRs ·` to:
 
@@ -1090,7 +1113,7 @@ Create `web/src/lib/githubGraphql.test.ts`:
 ```ts
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GhGraphQLError, ghGraphQL } from './githubGraphql'
-import { GhRateLimitError } from './githubFetch'
+import { GhRateLimitError, clearQueueBackoff } from './githubFetch'
 
 function mockResponse(body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -1101,6 +1124,10 @@ function mockResponse(body: unknown, headers: Record<string, string> = {}): Resp
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  // apiQueue is a module singleton shared with githubFetch.ts. The rate-limit
+  // tests set a real 60 s backoff on it; without clearing it here every later
+  // test in the file blocks on that backoff and hits the Vitest timeout.
+  clearQueueBackoff()
 })
 
 describe('ghGraphQL', () => {
@@ -1949,7 +1976,7 @@ git commit -m "Add the branch table component"
 
 **Interfaces:**
 - Consumes: `useSweep` (Task 2), `fetchRepoBranches` (Task 7), `BranchTable` (Task 8)
-- Produces: `<BranchesView activeRepos getToken hasToken onRequestSignIn />`, `readStaleThreshold()`, `writeStaleThreshold(days)`, `readStaleOnly()`, `writeStaleOnly(v)`
+- Produces: `<BranchesView activeRepos getToken hasToken />`, `readStaleThreshold()`, `writeStaleThreshold(days)`, `readStaleOnly()`, `writeStaleOnly(v)`. The sign-in panel points at the existing Settings controls rather than taking a callback, so there is no `onRequestSignIn` prop.
 
 - [ ] **Step 1: Add preference persistence to `web/src/lib/cache.ts`**
 

@@ -62,7 +62,7 @@ class SerialQueue {
   }
 }
 
-const queue = new SerialQueue()
+export const apiQueue = new SerialQueue()
 
 let listeners: Array<(rl: RateLimitInfo | null) => void> = []
 let lastRateLimit: RateLimitInfo | null = null
@@ -75,21 +75,21 @@ export function subscribeRateLimit(fn: (rl: RateLimitInfo | null) => void): () =
   }
 }
 
-function publishRateLimit(rl: RateLimitInfo | null): void {
+export function publishRateLimit(rl: RateLimitInfo | null): void {
   lastRateLimit = rl
   for (const l of listeners) l(rl)
 }
 
 /** Force the next request to fire immediately, ignoring any pending backoff. */
 export function clearQueueBackoff(): void {
-  queue.clearBackoff()
+  apiQueue.clearBackoff()
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function parseRateLimit(headers: Headers): RateLimitInfo | null {
+export function parseRateLimit(headers: Headers): RateLimitInfo | null {
   const limit = headers.get('x-ratelimit-limit')
   const remaining = headers.get('x-ratelimit-remaining')
   const reset = headers.get('x-ratelimit-reset')
@@ -126,7 +126,7 @@ export interface GhFetchOptions {
 }
 
 export async function ghFetch<T>(path: string, opts: GhFetchOptions = {}): Promise<FetchResult<T>> {
-  return queue.enqueue(async () => {
+  return apiQueue.enqueue(async () => {
     if (opts.spaceBeforeMs && opts.spaceBeforeMs > 0) {
       await sleep(opts.spaceBeforeMs)
     }
@@ -152,7 +152,7 @@ export async function ghFetch<T>(path: string, opts: GhFetchOptions = {}): Promi
 
     if (res.status === 403 || res.status === 429) {
       const until = computeBackoff(res)
-      queue.setBackoff(until)
+      apiQueue.setBackoff(until)
       const message = `GitHub API ${res.status} (backoff until ${new Date(until).toLocaleTimeString()})`
       throw new GhRateLimitError(message, until, res.status)
     }

@@ -40,6 +40,7 @@ export function RateLimitInfo({ rl }: { rl: RL | null }) {
   return (
     <span className={`rate-limit ${low ? 'warn' : ''}`}>
       GitHub API: {rl.remaining} left of {rl.limit} ({used} used){resetSuffix}
+      {rl.resource === 'graphql' ? ' (GraphQL)' : ''}
     </span>
   )
 }

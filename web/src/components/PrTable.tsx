@@ -18,6 +18,7 @@ import { useState } from 'react'
 import type { PullRequestInfo, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
+import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
 import { StatusBadge } from './StatusBadge'
 
 const STALE_THRESHOLD_MS = 60 * 60_000
@@ -79,9 +80,10 @@ interface Props {
   allRepos: readonly string[]
   results: Record<string, PrResult>
   inFlight: string | null
+  authorFilter: AuthorFilter
 }
 
-export function PrTable({ allRepos, results, inFlight }: Props) {
+export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
   const sorted = [...allRepos].sort((a, b) => a.localeCompare(b))
   // Explicit per-repo overrides. Missing key → default: expanded iff the repo
   // has at least one PR.
@@ -148,6 +150,7 @@ export function PrTable({ allRepos, results, inFlight }: Props) {
         <thead>
           <tr>
             <th>Title</th>
+            <th>Author</th>
             <th>Date</th>
             <th>Build status</th>
             <th>PR</th>
@@ -162,6 +165,7 @@ export function PrTable({ allRepos, results, inFlight }: Props) {
               isInFlight={inFlight === repo}
               collapsed={isCollapsed(repo)}
               onToggle={() => toggle(repo)}
+              authorFilter={authorFilter}
             />
           ))}
         </tbody>
@@ -176,11 +180,16 @@ interface RepoRowsProps {
   isInFlight: boolean
   collapsed: boolean
   onToggle: () => void
+  authorFilter: AuthorFilter
 }
 
-function RepoRows({ repo, result, isInFlight, collapsed, onToggle }: RepoRowsProps) {
+function RepoRows({ repo, result, isInFlight, collapsed, onToggle, authorFilter }: RepoRowsProps) {
   const repoUrl = `https://github.com/${MAVEN_OWNER}/${repo}/pulls`
-  const prs = result ? [...result.prs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : []
+  const prs = result
+    ? result.prs
+        .filter((p) => matchesAuthorFilter(p.authorClass, authorFilter))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : []
   const counts = countBuildStates(prs)
   const empty = prs.length === 0
   const className = `repo-header${empty ? ' repo-header-empty' : ''}${
@@ -191,7 +200,7 @@ function RepoRows({ repo, result, isInFlight, collapsed, onToggle }: RepoRowsPro
   return (
     <>
       <tr className={className}>
-        <td colSpan={4}>
+        <td colSpan={5}>
           <button
             type="button"
             className="repo-toggle"
@@ -228,7 +237,7 @@ function RepoMeta({ result, isInFlight, counts, prCount }: RepoMetaProps) {
 
   const fetched = formatFetchedAt(result.fetchedAt)
   if (prCount === 0) {
-    return <span className="muted"> · no Dependabot PRs · {fetched}</span>
+    return <span className="muted"> · no open PRs · {fetched}</span>
   }
   return (
     <>
@@ -266,6 +275,16 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
         {pr.isDraft && <span className="pr-chip pr-chip-draft">Draft</span>}
         {pr.baseRef && <span className="pr-chip pr-chip-base">→ {pr.baseRef}</span>}
         {pr.title}
+      </td>
+      <td className="nowrap">
+        <a
+          href={`https://github.com/${pr.author}`}
+          target="_blank"
+          rel="noreferrer"
+          className={pr.authorClass === 'human' ? '' : 'author-bot'}
+        >
+          {pr.author}
+        </a>
       </td>
       <td className="nowrap">{formatPrDate(pr.createdAt)}</td>
       <td>

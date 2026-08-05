@@ -68,12 +68,15 @@ export interface DashboardState {
 export interface BranchInfo {
   repo: string
   name: string
+  /** ISO 8601, or null when the ref target is not a commit. */
   lastCommitDate: string | null
   lastCommitAuthor: string | null
   headSha: string
   isProtected: boolean
   openPrCount: number
+  /** Commits this branch has that the default branch lacks. Null if unavailable. */
   aheadBy: number | null
+  /** Commits the default branch has that this branch lacks. Null if unavailable. */
   behindBy: number | null
   isDefault: boolean
 }
@@ -84,7 +87,9 @@ export interface RepoBranchResult {
   defaultBranch: string
   fetchedAt: number
   totalCount: number
+  /** True when the repo has more than the 100 refs we requested. */
   truncated: boolean
+  /** True when ahead/behind was dropped after a query timeout. */
   degraded: boolean
   error?: string
   archived?: boolean
