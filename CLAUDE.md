@@ -64,11 +64,21 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 - `.github/workflows/` — CI/CD
 - `.agents/skills/` — agent skills, tracked; see below
 
-### Agent skills need re-linking after a clone
+### Agent skills
 
-`.agents/skills/` is tracked, but Claude Code reads skills from `.claude/skills/`,
-and `.claude/` is gitignored — so a fresh clone has the skills without the wiring
-and Claude will not see them. Re-create the symlinks once:
+Skills live in `.agents/skills/`. Claude Code reads them from `.claude/skills/`,
+which holds symlinks into that directory — and both are tracked, so a clone gets
+working skills with no setup step.
+
+That is why `.gitignore` uses `.claude/*` with a `!.claude/skills/` exception
+rather than a blanket `.claude/`: git cannot re-include a path whose parent
+directory is excluded, so the blanket form would make the exception silently do
+nothing. Everything else under `.claude/` (worktrees, local settings) stays
+ignored.
+
+On Windows, symlinks need `git config core.symlinks true` and developer mode; a
+clone without it gets plain files containing a path. Re-create them if that
+happens:
 
 ```bash
 mkdir -p .claude/skills
@@ -76,9 +86,6 @@ for s in .agents/skills/*/; do
   ln -sfn "../../$s" ".claude/skills/$(basename "$s")"
 done
 ```
-
-`npx skills add <source>` also re-creates them for skills it installs, but not for
-`maven-reports-spa`, which is hand-written and has no upstream source.
 
 `maven-reports-spa` is the one worth reading before editing anything under
 `web/` — it records the traps that have already shipped as bugs here. The rest
