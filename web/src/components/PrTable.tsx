@@ -130,9 +130,16 @@ export function PrTable({ allRepos, results, inFlight, authorFilter }: Props) {
     : sorted
 
   const hiddenCount = sorted.length - visible.length
+  const truncated = sorted.filter((repo) => results[repo]?.truncated)
 
   return (
     <div className="pr-table-wrap">
+      {truncated.length > 0 && (
+        <p className="muted">
+          {truncated.length} {truncated.length === 1 ? 'repo has' : 'repos have'} more than 100
+          open PRs; showing the first 100 of each ({truncated.join(', ')}).
+        </p>
+      )}
       <div className="pr-table-controls">
         <label className="hide-empty">
           <input

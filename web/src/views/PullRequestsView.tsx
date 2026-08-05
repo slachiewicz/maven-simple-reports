@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { type CycleState, useSweep } from '../lib/useSweep'
 import { fetchPrBuildState, fetchRepoPrs, prBuildKey, type PrBuildResult } from '../lib/pulls'
+import { fetchRepoPrsGraphql } from '../lib/pullsGraphql'
 import {
   migrateLegacyCache,
   readAllResults,
@@ -67,18 +68,37 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
 
   const intervalMs = authenticated ? CYCLE_INTERVAL_AUTH_MS : CYCLE_INTERVAL_ANON_MS
 
+  // REST path: inventory sweep + separate build-status enrichment sweep. Only
+  // runs when unauthenticated — GitHub rejects anonymous GraphQL outright, so
+  // this path must keep working with no token.
   const sweep = useSweep<PrResult>({
     items: activeRepos,
     fetchOne: (repo, tok) => fetchRepoPrs(repo, { spaceBeforeMs: PER_REPO_SPACING_MS, token: tok }),
     getToken,
     intervalMs,
-    enabled: true,
+    enabled: !authenticated,
+    initialResults: hydratedResults,
+  })
+
+  // GraphQL path: one call per repo returns PRs and their build-status rollup
+  // together, so badges arrive with the row instead of a separate phase.
+  // Requires a token, so it only runs when authenticated. Both paths persist
+  // via writeResult under the same key, so hydratedResults seeds either one.
+  const graphqlSweep = useSweep<PrResult>({
+    items: activeRepos,
+    fetchOne: (repo, tok) => fetchRepoPrsGraphql(repo, tok),
+    getToken,
+    intervalMs,
+    enabled: authenticated,
     initialResults: hydratedResults,
   })
 
   const activeRepoSet = useMemo(() => new Set(activeRepos), [activeRepos])
 
-  const allPrs = useMemo(
+  // Raw REST inventory only, independent of which path is active — feeds
+  // solely the REST build-status enrichment sweep below. The GraphQL path
+  // never needs this: its PRs already carry buildState from the rollup.
+  const restPrs = useMemo(
     () =>
       Object.values(sweep.results)
         .filter((r) => activeRepoSet.has(r.repo))
@@ -93,7 +113,7 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
   // first few dozen before the 60/h budget runs out.
   const buildKeys = useMemo(() => {
     const byRepo = new Map<string, PullRequestInfo[]>()
-    for (const pr of allPrs) {
+    for (const pr of restPrs) {
       const group = byRepo.get(pr.repo)
       if (group) group.push(pr)
       else byRepo.set(pr.repo, [pr])
@@ -105,7 +125,7 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     }
     capped.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     return capped.map(prBuildKey)
-  }, [allPrs])
+  }, [restPrs])
 
   // Hydrate once from the persisted blob so a freshly opened tab shows build
   // badges instantly instead of re-fetching ~536 enrichment results from
@@ -121,7 +141,8 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     // Enrichment must not compete with the inventory sweep for the shared serial
     // queue: the full PR table has to render first, then badges fill in behind it.
     // This also lets enrichment use the inventory sweep's idle inter-cycle window.
-    enabled: sweep.pending.length === 0,
+    // Never runs when authenticated — the GraphQL path already has build state.
+    enabled: !authenticated && sweep.pending.length === 0,
     initialResults: hydratedBuildStates,
   })
 
@@ -139,6 +160,7 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
   useEffect(() => {
     if (tokenEpoch === 0) return
     sweep.wake()
+    graphqlSweep.wake()
     buildSweep.wake()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- wake on credential change only
   }, [tokenEpoch])
@@ -159,6 +181,20 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     return out
   }, [sweep.results, buildSweep.results])
 
+  // Single source of truth for everything rendered below, regardless of which
+  // fetch path produced it: the GraphQL sweep's results already carry build
+  // state, the REST sweep's are merged with the separate enrichment sweep above.
+  const activeSweep = authenticated ? graphqlSweep : sweep
+  const activeResults = authenticated ? graphqlSweep.results : enrichedResults
+
+  const allPrs = useMemo(
+    () =>
+      Object.values(activeResults)
+        .filter((r) => activeRepoSet.has(r.repo))
+        .flatMap((r) => r.prs),
+    [activeResults, activeRepoSet],
+  )
+
   const authorCounts = useMemo(() => {
     const counts: Record<AuthorFilter, number> = { all: 0, dependabot: 0, humans: 0 }
     for (const pr of allPrs) {
@@ -175,11 +211,11 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
   }
 
   const visibleResults = useMemo(
-    () => Object.values(enrichedResults).filter((r) => activeRepoSet.has(r.repo)),
-    [enrichedResults, activeRepoSet],
+    () => Object.values(activeResults).filter((r) => activeRepoSet.has(r.repo)),
+    [activeResults, activeRepoSet],
   )
 
-  const remaining = sweep.pending.length
+  const remaining = activeSweep.pending.length
   const fetched = Math.max(0, activeRepos.length - remaining)
 
   return (
@@ -191,23 +227,27 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
       />
 
       <section className="meta">
-        <CycleStatus cycle={sweep.cycle} fetched={fetched} total={activeRepos.length} />
+        <CycleStatus cycle={activeSweep.cycle} fetched={fetched} total={activeRepos.length} />
         <span className="meta-sep">·</span>
         <span className="muted">
           {authorCounts[authorFilter]} open PR{authorCounts[authorFilter] === 1 ? '' : 's'} across{' '}
           {visibleResults.filter((r) => r.prs.length > 0).length} repos
         </span>
-        <span className="meta-sep">·</span>
-        <span className="muted">
-          {buildSweep.pending.length > 0
-            ? `build status: ${buildKeys.length - buildSweep.pending.length}/${buildKeys.length}`
-            : `build status: ${buildKeys.length} PRs`}
-        </span>
+        {!authenticated && (
+          <>
+            <span className="meta-sep">·</span>
+            <span className="muted">
+              {buildSweep.pending.length > 0
+                ? `build status: ${buildKeys.length - buildSweep.pending.length}/${buildKeys.length}`
+                : `build status: ${buildKeys.length} PRs`}
+            </span>
+          </>
+        )}
         <span className="meta-sep grow">·</span>
         <button
           className="restart"
           type="button"
-          onClick={sweep.refreshNow}
+          onClick={activeSweep.refreshNow}
           title="Re-queue all active repos for a fresh fetch (previous data stays visible until each repo is updated)"
         >
           Refresh now
@@ -216,8 +256,8 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
 
       <PrTable
         allRepos={activeRepos}
-        results={enrichedResults}
-        inFlight={sweep.cycle.inFlight}
+        results={activeResults}
+        inFlight={activeSweep.cycle.inFlight}
         authorFilter={authorFilter}
       />
     </>

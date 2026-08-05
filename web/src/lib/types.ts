@@ -54,6 +54,8 @@ export interface PrResult {
   fromCache: boolean
   error?: string
   archived?: boolean
+  /** True when the repo has more than the 100 open PRs the GraphQL path requested. */
+  truncated?: boolean
 }
 
 export interface DashboardState {
