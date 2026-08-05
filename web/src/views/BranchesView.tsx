@@ -72,6 +72,14 @@ export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Pr
     writeStaleThreshold(days)
   }
 
+  // Must stay above the no-token early return: a hook called after it runs only
+  // on some renders, so the hook count changes when hasToken flips false→true
+  // (i.e. the moment someone pastes a token) and React throws.
+  const fetchedCount = useMemo(
+    () => activeRepos.filter((r) => sweep.results[r] !== undefined).length,
+    [activeRepos, sweep.results],
+  )
+
   if (!hasToken) {
     return (
       <div className="signin-prompt">
@@ -88,11 +96,6 @@ export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Pr
       </div>
     )
   }
-
-  const fetchedCount = useMemo(
-    () => activeRepos.filter((r) => sweep.results[r] !== undefined).length,
-    [activeRepos, sweep.results],
-  )
 
   return (
     <>
