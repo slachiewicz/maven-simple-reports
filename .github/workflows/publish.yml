@@ -183,23 +183,6 @@ jobs:
             echo "::warning::No registry on data branch — Maven 4 report missing"
           fi
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.2'
-
-      - name: Install asciidoctor
-        run: gem install asciidoctor
-
-      - name: Render AsciiDoc to HTML
-        run: |
-          shopt -s nullglob
-          for adoc_file in public/*.adoc; do
-            html_file="${adoc_file%.adoc}.html"
-            echo "  Converting $(basename "$adoc_file")..."
-            asciidoctor -a docinfo=shared-footer -o "$html_file" "$adoc_file"
-          done
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -251,23 +234,6 @@ jobs:
           else
             echo "::warning::No registry on data branch — Maven 4 report missing from this preview"
           fi
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.2'
-
-      - name: Install asciidoctor
-        run: gem install asciidoctor
-
-      - name: Render AsciiDoc to HTML
-        run: |
-          shopt -s nullglob
-          for adoc_file in public/*.adoc; do
-            html_file="${adoc_file%.adoc}.html"
-            echo "  Converting $(basename "$adoc_file")..."
-            asciidoctor -a docinfo=shared-footer -o "$html_file" "$adoc_file"
-          done
 
       - name: Set Netlify alias
         id: netlify-alias

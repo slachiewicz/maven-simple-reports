@@ -35,13 +35,4 @@ rm -rf "${DASHBOARD_DEST}"
 mkdir -p "${DASHBOARD_DEST}"
 cp -R "${REPO_ROOT}/web/dist/." "${DASHBOARD_DEST}/"
 
-# Convert any remaining AsciiDoc files (e.g. index.adoc) to HTML.
-echo "Converting AsciiDoc files to HTML..."
-shopt -s nullglob
-for adoc_file in "${REPO_ROOT}/public"/*.adoc; do
-    html_file="${adoc_file%.adoc}.html"
-    echo "  Converting $(basename "$adoc_file")..."
-    asciidoctor -a docinfo=shared-footer -o "$html_file" "$adoc_file"
-done
-
 echo "Report generated successfully in ${REPO_ROOT}/public/"

@@ -1,10 +1,8 @@
 .idea/
 *.iml
 
-public/*.adoc
-!public/index.adoc
 public/*.html
-!public/docinfo-footer.html
+!public/index.html
 public/*.csv
 public/dependabot-prs/
 cache/

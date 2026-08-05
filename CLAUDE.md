@@ -19,7 +19,7 @@ Further Python-based reports may live under `scripts/` in the future.
 ```bash
 scripts/generate_report.sh
 ```
-This builds the SPA (`cd web && npm ci && npm run build`), copies `web/dist/` into `public/dependabot-prs/`, and converts the remaining static AsciiDoc files (e.g. `index.adoc`) to HTML.
+This builds the SPA (`cd web && npm ci && npm run build`) and copies `web/dist/` into `public/dependabot-prs/`. The static `public/index.html` is hand-written and tracked as-is.
 
 ### Develop the SPA
 
@@ -41,10 +41,6 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 ## Requirements
 
 - **Node.js 22+** and npm (for the SPA build)
-- **Ruby** and the `asciidoctor` gem (for AsciiDoc → HTML conversion)
-  ```bash
-  gem install asciidoctor
-  ```
 - **Python 3** and **GitHub CLI (`gh`)** — required by future Python-based report scripts under `scripts/`
 
 ## Project Architecture
@@ -55,7 +51,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
    **Both APIs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so REST and GraphQL never fire concurrently. One consequence: the queue's backoff is global, so a REST 403 also stalls GraphQL even though they draw on separate GitHub budgets.
 2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
-3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA, copies it into `public/dependabot-prs/`, then runs `asciidoctor` on remaining `.adoc` files.
+3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA and copies it into `public/dependabot-prs/`.
 4. **`.github/workflows/publish-reports.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
 
 ### Directory layout
@@ -64,7 +60,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 - `netlify/functions/` — OAuth token-exchange Functions (`.mts`, ESM)
 - `netlify.toml` — Functions bundler config (no SPA build step here; the workflow runs `generate_report.sh`)
 - `scripts/` — Python and shell scripts
-- `public/` — published site root; only `index.adoc` is git-tracked (the rest is generated)
+- `public/` — published site root; only `index.html` is git-tracked (the rest is generated)
 - `.github/workflows/` — CI/CD
 
 ### OAuth flow (browser ↔ Netlify Functions ↔ GitHub)
