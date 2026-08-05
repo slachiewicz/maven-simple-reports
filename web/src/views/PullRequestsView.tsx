@@ -21,10 +21,12 @@ import {
   migrateLegacyCache,
   readAllResults,
   readAuthorFilter,
+  readBuildStates,
   writeAuthorFilter,
+  writeBuildStates,
 } from '../lib/cache'
 import type { AuthorFilter } from '../lib/authors'
-import type { PrResult } from '../lib/types'
+import type { PrResult, PullRequestInfo } from '../lib/types'
 import { PrTable } from '../components/PrTable'
 import { AuthorFilterControl } from '../components/AuthorFilter'
 
@@ -34,6 +36,11 @@ import { AuthorFilterControl } from '../components/AuthorFilter'
 const CYCLE_INTERVAL_ANON_MS = 30 * 60_000
 const CYCLE_INTERVAL_AUTH_MS = 5 * 60_000
 const PER_REPO_SPACING_MS = 800
+
+// Build status for every open PR costs ~2 REST calls each; at ~536 PRs that
+// dominates the budget. The newest few per repo are what anyone actually looks
+// at, and older PRs still render (with an unknown badge) at no request cost.
+const MAX_ENRICHED_PRS_PER_REPO = 10
 
 interface Props {
   activeRepos: readonly string[]
@@ -79,12 +86,32 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     [sweep.results, activeRepoSet],
   )
 
-  // Newest first: a reviewer cares about recent PRs, and an anonymous visitor
-  // only gets through the first few dozen before the 60/h budget runs out.
-  const buildKeys = useMemo(
-    () => [...allPrs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(prBuildKey),
-    [allPrs],
-  )
+  // Cap enrichment to the newest few PRs per repo rather than a flat global
+  // cap, so every repo gets some badges instead of later repos being starved
+  // entirely. Preserve the global newest-first order afterwards: a reviewer
+  // cares about recent PRs, and an anonymous visitor only gets through the
+  // first few dozen before the 60/h budget runs out.
+  const buildKeys = useMemo(() => {
+    const byRepo = new Map<string, PullRequestInfo[]>()
+    for (const pr of allPrs) {
+      const group = byRepo.get(pr.repo)
+      if (group) group.push(pr)
+      else byRepo.set(pr.repo, [pr])
+    }
+    const capped: PullRequestInfo[] = []
+    for (const group of byRepo.values()) {
+      group.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      capped.push(...group.slice(0, MAX_ENRICHED_PRS_PER_REPO))
+    }
+    capped.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return capped.map(prBuildKey)
+  }, [allPrs])
+
+  // Hydrate once from the persisted blob so a freshly opened tab shows build
+  // badges instantly instead of re-fetching ~536 enrichment results from
+  // scratch. Keys are head-SHA scoped (prBuildKey), so a hydrated entry is
+  // only ever reused for the exact commit it was fetched against.
+  const hydratedBuildStates = useMemo(() => readBuildStates<PrBuildResult>(), [])
 
   const buildSweep = useSweep<PrBuildResult>({
     items: buildKeys,
@@ -95,7 +122,17 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
     // queue: the full PR table has to render first, then badges fill in behind it.
     // This also lets enrichment use the inventory sweep's idle inter-cycle window.
     enabled: sweep.pending.length === 0,
+    initialResults: hydratedBuildStates,
   })
+
+  // Persist on result-set change rather than per-result (onResult), which would
+  // serialise the whole blob hundreds of times per cycle. useSweep already
+  // skips items already present in results, so hydrated entries cost zero
+  // requests — that's the entire point of persisting them.
+  useEffect(() => {
+    if (Object.keys(buildSweep.results).length === 0) return
+    writeBuildStates(buildSweep.results)
+  }, [buildSweep.results])
 
   // A token saved mid-sleep must resume immediately rather than waiting out a
   // rate-limit pause; useSweep only re-reads the token on its next fetch.
