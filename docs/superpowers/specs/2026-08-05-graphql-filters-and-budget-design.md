@@ -126,8 +126,12 @@ entries; 25 were found in a real browser profile.
 - **`BranchesView` surfaces no rate-limit pause**, unlike `PullRequestsView`'s
   `CycleStatus`. A shared-queue backoff can therefore present as a frozen
   `0/98 repos fetched` with no explanation.
-- **`lib/useBuildStatusEnrich.ts` is dead and broken** — it calls `useRef` inside
-  an async callback (a Rules-of-Hooks violation that would throw if it ever ran),
-  hardcodes `apache` rather than using `MAVEN_OWNER`, and bypasses the queue,
-  backoff and ETag cache. Nothing imports it, yet 15 tests exercise it. Inherited
-  from a parallel implementation; it should be deleted.
+## Resolved after this spec was written
+
+**`lib/useBuildStatusEnrich.ts` has been deleted** along with its 15 tests. It was
+inherited from a parallel implementation and was not merely dead but broken: it
+called `useRef` inside an async callback (a Rules-of-Hooks violation that would
+have thrown had anything imported it), hardcoded `apache` instead of using
+`MAVEN_OWNER`, bypassed the shared queue, backoff and ETag cache, and carried a
+second divergent copy of `deriveBuildState`. Its tests were 18% of the suite and
+measured a module nothing could reach. Suite went 82 → 67 tests, all passing.
