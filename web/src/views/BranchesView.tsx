@@ -38,9 +38,12 @@ interface Props {
    * view when there are no credentials. */
   hasToken: boolean
   tokenEpoch: number
+  /** False while the pull-requests tab is showing: the view stays mounted,
+   * keeping its place in the cycle, but stops spending the shared budget. */
+  active: boolean
 }
 
-export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Props) {
+export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch, active }: Props) {
   const [staleOnly, setStaleOnlyState] = useState<boolean>(() => readStaleOnly())
   const [threshold, setThresholdState] = useState<number>(() => readStaleThreshold())
 
@@ -51,7 +54,7 @@ export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Pr
     fetchOne: (repo, token) => fetchRepoBranches(repo, token),
     getToken,
     intervalMs: BRANCH_CYCLE_INTERVAL_MS,
-    enabled: hasToken,
+    enabled: hasToken && active,
     initialResults,
   })
 

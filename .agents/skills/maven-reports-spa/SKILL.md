@@ -78,6 +78,20 @@ The pattern behind the previous trap generalises: this codebase's filter bugs
 have all hidden in the *non-default* option. When adding or reviewing a toggle,
 click the states nobody defaults to.
 
+### Tab switches must not unmount a view
+
+`App` keeps both views mounted and hides the inactive one, passing `active` down
+so its `useSweep` parks through `enabled`. Conditional rendering looks tidier and
+is the obvious "simplification" — it is also the bug: a sweep's queue lives in
+its view's state, so unmounting discarded how far the cycle had got and coming
+back refetched all 157 repos from the top. That reached a user.
+
+Parking longer than the cycle interval still re-queues everything, on purpose:
+the interval sleep expires and the data is due a refresh either way.
+
+The signed-out invariant is unchanged — both views live behind `SignInPrompt`,
+so with no credentials neither mounts and no request is issued.
+
 ## Rate limits shape everything
 
 One budget, one fetch path: **5 000 GraphQL points/h** per token, spent by

@@ -203,6 +203,15 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
         }
         if (cancelled) return
 
+        // Parked mid-cycle — the view was hidden, not finished. Going round to
+        // the top parks in the poll above with the queue intact, so the tab
+        // resumes where it stopped instead of reporting a cycle it never
+        // completed and then re-queueing every item.
+        if (!enabledRef.current && pendingRef.current.length > 0) {
+          setCycle((c) => ({ ...c, inFlight: null }))
+          continue
+        }
+
         const interval = intervalRef.current
         const completed = Date.now()
         setCycle((c) => ({

@@ -69,9 +69,12 @@ interface Props {
   activeRepos: readonly string[]
   getToken: () => Promise<string | undefined>
   tokenEpoch: number
+  /** False while the branches tab is showing: the view stays mounted, keeping
+   * its place in the cycle, but stops spending the shared budget. */
+  active: boolean
 }
 
-export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
+export function PullRequestsView({ activeRepos, getToken, tokenEpoch, active }: Props) {
   const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
   const [draftFilter, setDraftFilterState] = useState<DraftFilter>(() => readDraftFilter())
   const [assigneeFilter, setAssigneeFilterState] = useState<string>(() => readAssigneeFilter())
@@ -98,7 +101,7 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
     fetchOne: (repo, tok) => fetchRepoPrsGraphql(repo, tok),
     getToken,
     intervalMs: CYCLE_INTERVAL_MS,
-    enabled: true,
+    enabled: active,
     initialResults: hydratedResults,
   })
 

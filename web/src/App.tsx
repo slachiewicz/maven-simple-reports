@@ -245,19 +245,32 @@ export function App() {
       <main>
         {!authenticated ? (
           <SignInPrompt />
-        ) : view === 'prs' ? (
-          <PullRequestsView
-            activeRepos={activeRepos}
-            getToken={acquireToken}
-            tokenEpoch={tokenEpoch}
-          />
         ) : (
-          <BranchesView
-            activeRepos={activeRepos}
-            getToken={acquireToken}
-            hasToken={authenticated}
-            tokenEpoch={tokenEpoch}
-          />
+          // Both views stay mounted and the inactive one is hidden, rather than
+          // switching tabs unmounting a view. A sweep lives in its view's state,
+          // so unmounting threw away how far the cycle had got and the next
+          // visit re-fetched every repo from the top. Parked via `enabled`, the
+          // loop keeps its queue and resumes where it stopped. Only the visible
+          // tab sweeps: the two share one 5 000 points/h budget.
+          <>
+            <div hidden={view !== 'prs'}>
+              <PullRequestsView
+                activeRepos={activeRepos}
+                getToken={acquireToken}
+                tokenEpoch={tokenEpoch}
+                active={view === 'prs'}
+              />
+            </div>
+            <div hidden={view !== 'branches'}>
+              <BranchesView
+                activeRepos={activeRepos}
+                getToken={acquireToken}
+                hasToken={authenticated}
+                tokenEpoch={tokenEpoch}
+                active={view === 'branches'}
+              />
+            </div>
+          </>
         )}
       </main>
 
