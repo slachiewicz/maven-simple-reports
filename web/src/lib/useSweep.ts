@@ -226,7 +226,7 @@ export function useSweep<T>(opts: SweepOptions<T>): SweepResult<T> {
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- start once, drive via refs
+    // Deliberately empty: the loop starts once and is driven by refs thereafter.
   }, [])
 
   return { results, cycle, pending, refreshNow, wake }

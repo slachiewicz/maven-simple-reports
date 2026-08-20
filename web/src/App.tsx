@@ -136,7 +136,6 @@ export function App() {
       }
     }
     return tokenRef.current || undefined
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const authenticated = !!oauth || !!token
@@ -180,7 +179,6 @@ export function App() {
       .catch((err) => {
         setOauthError(err instanceof Error ? err.message : String(err))
       })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const updateFilter = (next: string) => {
