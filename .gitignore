@@ -22,3 +22,6 @@ netlify/node_modules/
 
 # Installed dependencies anywhere (web/, and any stray root install)
 node_modules/
+
+# Python bytecode from the report scripts
+__pycache__/

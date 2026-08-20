@@ -15,11 +15,13 @@
  */
 
 import { useState } from 'react'
+import { assigneesOf, hasAssigneeData } from '../lib/types'
 import type { PullRequestInfo, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
 import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
+import { matchesAssigneeFilter } from '../lib/assignees'
 import { StatusBadge } from './StatusBadge'
 
 const STALE_THRESHOLD_MS = 60 * 60_000
@@ -89,8 +91,17 @@ function countBuildStates(prs: PullRequestInfo[]): BuildCounts {
 // ever drift, repos whose PRs are all filtered out render as empty "no open
 // PRs" headers while "hide repos without PRs" is ticked (a bug shipped and
 // fixed once already).
-function matchesFilters(pr: PullRequestInfo, authorFilter: AuthorFilter, draftFilter: DraftFilter): boolean {
-  return matchesAuthorFilter(pr.authorClass, authorFilter) && matchesDraftFilter(pr.isDraft, draftFilter)
+function matchesFilters(
+  pr: PullRequestInfo,
+  authorFilter: AuthorFilter,
+  draftFilter: DraftFilter,
+  assigneeFilter: string,
+): boolean {
+  return (
+    matchesAuthorFilter(pr.authorClass, authorFilter) &&
+    matchesDraftFilter(pr.isDraft, draftFilter) &&
+    matchesAssigneeFilter(pr, assigneeFilter)
+  )
 }
 
 interface Props {
@@ -99,9 +110,17 @@ interface Props {
   inFlight: string | null
   authorFilter: AuthorFilter
   draftFilter: DraftFilter
+  assigneeFilter: string
 }
 
-export function PrTable({ allRepos, results, inFlight, authorFilter, draftFilter }: Props) {
+export function PrTable({
+  allRepos,
+  results,
+  inFlight,
+  authorFilter,
+  draftFilter,
+  assigneeFilter,
+}: Props) {
   const sorted = [...allRepos].sort((a, b) => a.localeCompare(b))
   // Explicit per-repo overrides. Missing key → default: expanded iff the repo
   // has at least one PR.
@@ -130,17 +149,17 @@ export function PrTable({ allRepos, results, inFlight, authorFilter, draftFilter
   }
 
   // Hide only fully-fetched repos that render no rows. This must apply the same
-  // combined author+draft predicate the rows themselves do (matchesFilters) —
-  // testing the raw prs array instead would leave every repo visible whose PRs
-  // all belong to a filtered-out author/draft state, showing a wall of "no open
-  // PRs" headers while the box is ticked.
+  // combined author+draft+assignee predicate the rows themselves do
+  // (matchesFilters) — testing the raw prs array instead would leave every repo
+  // visible whose PRs all belong to a filtered-out state, showing a wall of
+  // "no open PRs" headers while the box is ticked.
   // Pending and errored entries stay visible so fetch state is still legible.
   const visible = hideEmpty
     ? sorted.filter((repo) => {
         const r = results[repo]
         if (!r) return true
         if (r.error) return true
-        return r.prs.some((p) => matchesFilters(p, authorFilter, draftFilter))
+        return r.prs.some((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter))
       })
     : sorted
 
@@ -180,6 +199,7 @@ export function PrTable({ allRepos, results, inFlight, authorFilter, draftFilter
           <tr>
             <th>Title</th>
             <th>Author</th>
+            <th>Assignee</th>
             <th>Date</th>
             <th>Build status</th>
             <th>PR</th>
@@ -196,6 +216,7 @@ export function PrTable({ allRepos, results, inFlight, authorFilter, draftFilter
               onToggle={() => toggle(repo)}
               authorFilter={authorFilter}
               draftFilter={draftFilter}
+              assigneeFilter={assigneeFilter}
             />
           ))}
         </tbody>
@@ -212,13 +233,23 @@ interface RepoRowsProps {
   onToggle: () => void
   authorFilter: AuthorFilter
   draftFilter: DraftFilter
+  assigneeFilter: string
 }
 
-function RepoRows({ repo, result, isInFlight, collapsed, onToggle, authorFilter, draftFilter }: RepoRowsProps) {
+function RepoRows({
+  repo,
+  result,
+  isInFlight,
+  collapsed,
+  onToggle,
+  authorFilter,
+  draftFilter,
+  assigneeFilter,
+}: RepoRowsProps) {
   const repoUrl = `https://github.com/${MAVEN_OWNER}/${repo}/pulls`
   const prs = result
     ? result.prs
-        .filter((p) => matchesFilters(p, authorFilter, draftFilter))
+        .filter((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     : []
   const counts = countBuildStates(prs)
@@ -231,7 +262,7 @@ function RepoRows({ repo, result, isInFlight, collapsed, onToggle, authorFilter,
   return (
     <>
       <tr className={className}>
-        <td colSpan={5}>
+        <td colSpan={6}>
           <button
             type="button"
             className="repo-toggle"
@@ -317,6 +348,9 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
           {pr.author}
         </a>
       </td>
+      <td className="nowrap">
+        <AssigneeCell pr={pr} />
+      </td>
       <td className="nowrap" title={`Opened ${pr.createdAt}`}>
         {formatPrDate(pr.createdAt)}
       </td>
@@ -331,5 +365,34 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
         </a>
       </td>
     </tr>
+  )
+}
+
+/**
+ * An absent `assignees` field means the entry was cached before this column
+ * existed, which is not the same as nobody being assigned. Rendering both as
+ * "—" would quietly assert the stronger claim, so unknown shows "?" instead.
+ */
+function AssigneeCell({ pr }: { pr: PullRequestInfo }) {
+  if (!hasAssigneeData(pr)) {
+    return (
+      <span className="muted" title="Cached before assignees were recorded; refreshes on the next fetch">
+        ?
+      </span>
+    )
+  }
+  const assignees = assigneesOf(pr)
+  if (assignees.length === 0) return <span className="muted">—</span>
+  return (
+    <>
+      {assignees.map((a, i) => (
+        <span key={a.login}>
+          {i > 0 && ', '}
+          <a href={a.htmlUrl} target="_blank" rel="noreferrer">
+            {a.login}
+          </a>
+        </span>
+      ))}
+    </>
   )
 }

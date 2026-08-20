@@ -23,9 +23,11 @@ import {
   readAllResults,
   readAuthorFilter,
   readBuildStates,
+  readAssigneeFilter,
   readDraftFilter,
   writeAuthorFilter,
   writeBuildStates,
+  writeAssigneeFilter,
   writeDraftFilter,
 } from '../lib/cache'
 import type { AuthorFilter } from '../lib/authors'
@@ -35,6 +37,13 @@ import type { PrResult, PullRequestInfo } from '../lib/types'
 import { PrTable } from '../components/PrTable'
 import { AuthorFilterControl } from '../components/AuthorFilter'
 import { SegmentedControl } from '../components/SegmentedControl'
+import {
+  ASSIGNEE_ALL,
+  ASSIGNEE_ANY,
+  ASSIGNEE_NONE,
+  collectAssignees,
+  matchesAssigneeFilter,
+} from '../lib/assignees'
 
 // 30 min between full cycles when unauthenticated (60/h budget); 5 min when a PAT
 // is configured (5 000/h budget). The interval is read at the start of each
@@ -64,6 +73,7 @@ interface Props {
 export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEpoch }: Props) {
   const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
   const [draftFilter, setDraftFilterState] = useState<DraftFilter>(() => readDraftFilter())
+  const [assigneeFilter, setAssigneeFilterState] = useState<string>(() => readAssigneeFilter())
 
   // Hydrate from any prior tab's persisted results so a freshly opened tab
   // shows data instantly (even before its own fetch completes). Also run the
@@ -208,29 +218,47 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
   )
 
   // Each control's counts describe what selecting that option would actually
-  // yield, so they're computed with the OTHER filter already applied — author
-  // counts over PRs matching the current draftFilter, and vice versa.
+  // yield, so they're computed with the OTHER filters already applied — author
+  // counts over PRs matching the current draft and assignee filters, and so on
+  // for each control in turn.
   const authorCounts = useMemo(() => {
     const counts: Record<AuthorFilter, number> = { all: 0, dependabot: 0, humans: 0 }
     for (const pr of allPrs) {
       if (!matchesDraftFilter(pr.isDraft, draftFilter)) continue
+      if (!matchesAssigneeFilter(pr, assigneeFilter)) continue
       counts.all++
       if (pr.authorClass === 'dependabot') counts.dependabot++
       else if (pr.authorClass === 'human') counts.humans++
     }
     return counts
-  }, [allPrs, draftFilter])
+  }, [allPrs, draftFilter, assigneeFilter])
 
   const draftCounts = useMemo(() => {
     const counts: Record<DraftFilter, number> = { all: 0, ready: 0, draft: 0 }
     for (const pr of allPrs) {
       if (!matchesAuthorFilter(pr.authorClass, authorFilter)) continue
+      if (!matchesAssigneeFilter(pr, assigneeFilter)) continue
       counts.all++
       if (pr.isDraft) counts.draft++
       else counts.ready++
     }
     return counts
-  }, [allPrs, authorFilter])
+  }, [allPrs, authorFilter, assigneeFilter])
+
+  // The dropdown lists everyone seen so far, plus the stored value even when
+  // the cycle has not yet reached a repo that mentions them — otherwise a
+  // persisted login would silently reset to "All" on reload.
+  const assigneeLogins = useMemo(() => {
+    const logins = collectAssignees(activeResults)
+    const isSentinel =
+      assigneeFilter === ASSIGNEE_ALL ||
+      assigneeFilter === ASSIGNEE_ANY ||
+      assigneeFilter === ASSIGNEE_NONE
+    if (!isSentinel && !logins.includes(assigneeFilter)) {
+      return [assigneeFilter, ...logins].sort((a, b) => a.localeCompare(b))
+    }
+    return logins
+  }, [activeResults, assigneeFilter])
 
   const setAuthorFilter = (next: AuthorFilter) => {
     setAuthorFilterState(next)
@@ -240,6 +268,11 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
   const setDraftFilter = (next: DraftFilter) => {
     setDraftFilterState(next)
     writeDraftFilter(next)
+  }
+
+  const setAssigneeFilter = (next: string) => {
+    setAssigneeFilterState(next)
+    writeAssigneeFilter(next)
   }
 
   const visibleResults = useMemo(
@@ -263,6 +296,19 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
         ariaLabel="Filter pull requests by draft status"
         options={DRAFT_OPTIONS.map((opt) => ({ ...opt, count: draftCounts[opt.key] }))}
       />
+      <label className="assignee-filter">
+        Assignee{' '}
+        <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}>
+          <option value={ASSIGNEE_ALL}>All</option>
+          <option value={ASSIGNEE_ANY}>Assigned</option>
+          <option value={ASSIGNEE_NONE}>Unassigned</option>
+          {assigneeLogins.map((login) => (
+            <option key={login} value={login}>
+              {login}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <section className="meta">
         <CycleStatus cycle={activeSweep.cycle} fetched={fetched} total={activeRepos.length} />
@@ -298,6 +344,7 @@ export function PullRequestsView({ activeRepos, getToken, authenticated, tokenEp
         inFlight={activeSweep.cycle.inFlight}
         authorFilter={authorFilter}
         draftFilter={draftFilter}
+        assigneeFilter={assigneeFilter}
       />
     </>
   )

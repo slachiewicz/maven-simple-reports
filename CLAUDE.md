@@ -155,17 +155,29 @@ Merge-conflict detection (`/pulls/{n}.mergeable`) is not consulted. See
 
 ## Filtering (client-side, zero requests)
 
-Two segmented controls, both rendered by `components/SegmentedControl.tsx`
-(`role="radiogroup"`), filtering already-fetched data:
+Three controls filtering already-fetched data. The first two are segmented
+controls rendered by `components/SegmentedControl.tsx` (`role="radiogroup"`);
+the third is a dropdown, because its options are discovered at runtime:
 
 - **Author** — All / Dependabot / People (`lib/authors.ts`). Bot-ness comes from
   the API's `type` field, never from pattern-matching the login, so a user called
   `robotics-fan` is not misfiled. "People" excludes *all* bots, so
   `dependabot + people` is usually less than `all`.
 - **Draft** — All / Ready / Draft (`lib/prFilters.ts`).
+- **Assignee** — All / Assigned / Unassigned / one login (`lib/assignees.ts`).
+  The login list is collected from whatever the current cycle has fetched, so it
+  grows as the sweep progresses.
 
-Each control's counts are computed with the *other* filter already applied, so a
-count states what clicking it would actually yield.
+Each segmented control's counts are computed with the *other* filters already
+applied, so a count states what clicking it would actually yield.
+
+`PullRequestInfo.assignees` is deliberately optional. Entries persisted before
+the column existed have no such field, and `undefined` means "unknown", *not*
+"unassigned" — `hasAssigneeData()` separates the two so a stale row renders "?"
+and is excluded from both Assigned and Unassigned rather than being claimed as
+nobody's. Making the field required would have forced a `gh-result:` version
+bump, discarding every repo's last known state and burning a full refetch
+against the rate limit.
 
 > **Trap, shipped and fixed twice.** `PrTable`'s "hide repos without PRs" test and
 > its row rendering MUST use the same predicate — `matchesFilters()`. When they

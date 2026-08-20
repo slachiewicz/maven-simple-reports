@@ -481,6 +481,24 @@ footer {
   padding: 0.25rem 0.7rem;
 }
 
+.assignee-filter {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0.5rem 0;
+  color: var(--muted);
+}
+
+.assignee-filter select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
 .author-filter-btn-active {
   font-weight: 600;
   outline: 2px solid currentColor;

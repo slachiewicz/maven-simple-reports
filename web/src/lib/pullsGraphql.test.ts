@@ -36,6 +36,7 @@ function prNode(overrides: Record<string, unknown> = {}) {
     baseRefName: 'master',
     headRefOid: 'abc123',
     author: { login: 'dependabot[bot]', __typename: 'Bot' },
+    assignees: { nodes: [] },
     commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
     ...overrides,
   }
@@ -208,5 +209,52 @@ describe('fetchRepoPrsGraphql', () => {
       vi.fn().mockResolvedValue(new Response('rate limited', { status: 403 })),
     )
     await expect(fetchRepoPrsGraphql('maven', 'tok')).rejects.toBeInstanceOf(GhRateLimitError)
+  })
+})
+
+describe('fetchRepoPrsGraphql assignees', () => {
+  it('maps the assignee nodes onto the PR', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        mockResponse(
+          repoResponse([
+            prNode({
+              assignees: {
+                nodes: [
+                  {
+                    login: 'slachiewicz',
+                    avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+                    url: 'https://github.com/slachiewicz',
+                  },
+                ],
+              },
+            }),
+          ]),
+        ),
+      ),
+    )
+
+    const result = await fetchRepoPrsGraphql('maven-compiler-plugin', 'tok')
+    expect(result.prs[0].assignees).toEqual([
+      {
+        login: 'slachiewicz',
+        avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+        htmlUrl: 'https://github.com/slachiewicz',
+      },
+    ])
+  })
+
+  // Always an array, never undefined: undefined is reserved for cache entries
+  // written before the field existed, and conflating the two would make a
+  // freshly fetched unassigned PR render as "?".
+  it('records an empty array rather than undefined when nobody is assigned', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(mockResponse(repoResponse([prNode({ assignees: { nodes: [] } })]))),
+    )
+
+    const result = await fetchRepoPrsGraphql('maven-compiler-plugin', 'tok')
+    expect(result.prs[0].assignees).toEqual([])
   })
 })

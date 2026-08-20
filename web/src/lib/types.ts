@@ -30,6 +30,12 @@ export interface RateLimitInfo {
   resource: 'rest' | 'graphql'
 }
 
+export interface PrAssignee {
+  login: string
+  avatarUrl: string
+  htmlUrl: string
+}
+
 export interface PullRequestInfo {
   repo: string
   number: number
@@ -45,6 +51,31 @@ export interface PullRequestInfo {
   headSha: string
   buildState: BuildState
   buildStateFetchedAt: number | null
+  /**
+   * Optional on purpose: results persisted by earlier versions predate this
+   * field, and we want them to keep working rather than force a `gh-result:`
+   * version bump (which would discard every repo's last known state and burn a
+   * full refetch cycle against the rate limit).
+   *
+   * `undefined` therefore means "this cached entry was written before the
+   * column existed" — *not* "nobody is assigned". Use `hasAssigneeData()` to
+   * tell the two apart and `assigneesOf()` to read the list safely.
+   */
+  assignees?: PrAssignee[]
+}
+
+/**
+ * True once a PR has been fetched by a version that knows about assignees.
+ * Distinguishes a genuinely unassigned PR from a stale cache entry, so the UI
+ * never claims "unassigned" about data it simply does not have yet.
+ */
+export function hasAssigneeData(pr: PullRequestInfo): boolean {
+  return pr.assignees !== undefined
+}
+
+/** Null-safe accessor tolerating pre-assignee entries from `localStorage`. */
+export function assigneesOf(pr: PullRequestInfo): PrAssignee[] {
+  return pr.assignees ?? []
 }
 
 export interface PrResult {

@@ -52,6 +52,7 @@ function makePr(fixture: PrFixture): PullRequestInfo {
     checksUrl: `https://github.com/apache/${fixture.repo}/pull/${fixture.number}/checks`,
     headSha: 'deadbeef',
     buildStateFetchedAt: null,
+    assignees: [],
   }
 }
 
@@ -103,6 +104,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="all"
+        assigneeFilter="all"
       />,
     )
 
@@ -146,6 +148,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="draft"
+        assigneeFilter="all"
       />,
     )
 
@@ -177,6 +180,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="draft"
+        assigneeFilter="all"
       />,
     )
     expect(screen.queryByText('draft-human')).toBeNull()
@@ -189,6 +193,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="humans"
         draftFilter="draft"
+        assigneeFilter="all"
       />,
     )
     expect(screen.getByText('draft-human')).toBeTruthy()
@@ -219,6 +224,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        assigneeFilter="all"
       />,
     )
 
@@ -259,6 +265,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="all"
+        assigneeFilter="all"
       />,
     )
 
@@ -285,10 +292,155 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        assigneeFilter="all"
       />,
     )
 
     expect(screen.getByText('pending-repo')).toBeTruthy()
     expect(screen.getByText('has-error')).toBeTruthy()
+  })
+})
+
+describe('assignee filter', () => {
+  // Every filter bug in this table has hidden in a non-default option, so the
+  // interesting cases are all away from "All".
+  function assignedTo(logins: string[]): Partial<PullRequestInfo> {
+    return {
+      assignees: logins.map((login) => ({
+        login,
+        avatarUrl: `https://avatars.githubusercontent.com/${login}`,
+        htmlUrl: `https://github.com/${login}`,
+      })),
+    }
+  }
+
+  const base = {
+    number: 1,
+    title: 'Bump something',
+    author: 'dependabot[bot]',
+    authorClass: 'dependabot' as AuthorClass,
+    createdAt: '2026-08-01T10:00:00Z',
+    isDraft: false,
+    buildState: 'SUCCESS' as BuildState,
+  }
+
+  function results(): Record<string, PrResult> {
+    return makeResults({
+      'assigned-to-slachiewicz': [
+        { ...makePr({ ...base, repo: 'assigned-to-slachiewicz' }), ...assignedTo(['slachiewicz']) },
+      ],
+      'assigned-to-someone-else': [
+        { ...makePr({ ...base, repo: 'assigned-to-someone-else' }), ...assignedTo(['ascheman']) },
+      ],
+      unassigned: [{ ...makePr({ ...base, repo: 'unassigned' }), ...assignedTo([]) }],
+    })
+  }
+
+  const allRepos = ['assigned-to-slachiewicz', 'assigned-to-someone-else', 'unassigned']
+
+  it('narrows to a single login', () => {
+    writeHideEmpty(true)
+    render(
+      <PrTable
+        allRepos={allRepos}
+        results={results()}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="slachiewicz"
+      />,
+    )
+
+    expect(screen.getByText('assigned-to-slachiewicz')).toBeTruthy()
+    expect(screen.queryByText('assigned-to-someone-else')).toBeNull()
+    expect(screen.queryByText('unassigned')).toBeNull()
+  })
+
+  it('keeps only assigned PRs under "Assigned"', () => {
+    writeHideEmpty(true)
+    render(
+      <PrTable
+        allRepos={allRepos}
+        results={results()}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="__any__"
+      />,
+    )
+
+    expect(screen.getByText('assigned-to-slachiewicz')).toBeTruthy()
+    expect(screen.getByText('assigned-to-someone-else')).toBeTruthy()
+    expect(screen.queryByText('unassigned')).toBeNull()
+  })
+
+  it('keeps only unassigned PRs under "Unassigned"', () => {
+    writeHideEmpty(true)
+    render(
+      <PrTable
+        allRepos={allRepos}
+        results={results()}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="__none__"
+      />,
+    )
+
+    expect(screen.getByText('unassigned')).toBeTruthy()
+    expect(screen.queryByText('assigned-to-slachiewicz')).toBeNull()
+  })
+
+  // The cache-compatibility case: a PR persisted before the column existed has
+  // no assignees field. Claiming it as unassigned would be a lie about data we
+  // simply do not have.
+  it('excludes a pre-assignee cache entry from both Assigned and Unassigned', () => {
+    const stale = makePr({ ...base, repo: 'stale' })
+    delete stale.assignees
+    const staleResults = makeResults({ stale: [stale] })
+
+    writeHideEmpty(true)
+    const { unmount } = render(
+      <PrTable
+        allRepos={['stale']}
+        results={staleResults}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="__none__"
+      />,
+    )
+    expect(screen.queryByText('stale')).toBeNull()
+    unmount()
+
+    render(
+      <PrTable
+        allRepos={['stale']}
+        results={staleResults}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="__any__"
+      />,
+    )
+    expect(screen.queryByText('stale')).toBeNull()
+  })
+
+  it('renders "?" rather than "—" for a pre-assignee cache entry', () => {
+    const stale = makePr({ ...base, repo: 'stale' })
+    delete stale.assignees
+    render(
+      <PrTable
+        allRepos={['stale']}
+        results={makeResults({ stale: [stale] })}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        assigneeFilter="all"
+      />,
+    )
+
+    expect(screen.getByText('?')).toBeTruthy()
+    expect(screen.queryByText('—')).toBeNull()
   })
 })

@@ -33,6 +33,7 @@ query($owner:String!, $repo:String!) {
         number title createdAt updatedAt isDraft url
         baseRefName headRefOid
         author { login __typename }
+        assignees(first:10) { nodes { login avatarUrl url } }
         commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
       }
     }
@@ -50,6 +51,7 @@ interface PrNode {
   baseRefName: string
   headRefOid: string
   author: { login: string; __typename: string } | null
+  assignees?: { nodes: Array<{ login: string; avatarUrl: string; url: string }> }
   commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> }
 }
 
@@ -148,6 +150,14 @@ export async function fetchRepoPrsGraphql(
         headSha: n.headRefOid,
         buildState: mapRollupState(rollup?.state),
         buildStateFetchedAt: rollup ? Date.now() : null,
+        // Always set, never left undefined: an empty array is "nobody is
+        // assigned", while undefined is reserved for cache entries written
+        // before this field existed. See hasAssigneeData().
+        assignees: (n.assignees?.nodes ?? []).map((a) => ({
+          login: a.login,
+          avatarUrl: a.avatarUrl,
+          htmlUrl: a.url,
+        })),
       }
     })
 

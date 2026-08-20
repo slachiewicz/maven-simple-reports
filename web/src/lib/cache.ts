@@ -27,6 +27,7 @@ const HIDE_EMPTY_KEY = 'gh-hide-empty:v1'
 const OAUTH_KEY = 'gh-oauth:v1'
 const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
 const DRAFT_FILTER_KEY = 'gh-draft-filter:v1'
+const ASSIGNEE_FILTER_KEY = 'gh-assignee-filter:v1'
 const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
 const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
 const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
@@ -354,6 +355,28 @@ export function writeDraftFilter(filter: DraftFilter): void {
     localStorage.setItem(DRAFT_FILTER_KEY, filter)
   } catch (err) {
     reportQuotaFailure('draft filter', err)
+  }
+}
+
+/**
+ * Unlike the author and draft filters, any string is legal here: the value is
+ * either one of the sentinels or a GitHub login, and the set of logins isn't
+ * known until repos have been fetched. A login that no longer appears simply
+ * matches nothing, which the dropdown shows as the stored-but-absent option.
+ */
+export function readAssigneeFilter(): string {
+  try {
+    return localStorage.getItem(ASSIGNEE_FILTER_KEY) || 'all'
+  } catch {
+    return 'all'
+  }
+}
+
+export function writeAssigneeFilter(filter: string): void {
+  try {
+    localStorage.setItem(ASSIGNEE_FILTER_KEY, filter)
+  } catch (err) {
+    reportQuotaFailure('assignee filter', err)
   }
 }
 

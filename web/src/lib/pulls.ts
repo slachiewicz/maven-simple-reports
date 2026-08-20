@@ -33,6 +33,7 @@ interface RestPullRequest {
   number: number
   title: string
   user: { login: string; type: string } | null
+  assignees: Array<{ login: string; avatar_url: string; html_url: string }> | null
   created_at: string
   updated_at: string
   draft: boolean
@@ -100,6 +101,11 @@ const result: PrResult = {
         headSha: pr.head.sha,
         buildState: 'UNKNOWN',
         buildStateFetchedAt: null,
+        assignees: (pr.assignees ?? []).map((a) => ({
+          login: a.login,
+          avatarUrl: a.avatar_url,
+          htmlUrl: a.html_url,
+        })),
       }
 
       prs.push(pull)
