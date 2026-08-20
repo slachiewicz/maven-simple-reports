@@ -16,7 +16,7 @@
 
 import type { BranchInfo, RepoBranchResult } from '../lib/types'
 import { isStaleBranch } from '../lib/branches'
-import { MAVEN_OWNER } from '../lib/repos'
+import { ownerOf } from '../lib/repos'
 
 interface Props {
   allRepos: readonly string[]
@@ -124,8 +124,8 @@ export function BranchTable({ allRepos, results, inFlight, staleOnly, thresholdD
 }
 
 function BranchRow({ branch }: { branch: BranchInfo }) {
-  const branchUrl = `https://github.com/${MAVEN_OWNER}/${branch.repo}/tree/${encodeURIComponent(branch.name)}`
-  const repoUrl = `https://github.com/${MAVEN_OWNER}/${branch.repo}`
+  const branchUrl = `https://github.com/${ownerOf(branch.repo)}/${branch.repo}/tree/${encodeURIComponent(branch.name)}`
+  const repoUrl = `https://github.com/${ownerOf(branch.repo)}/${branch.repo}`
   return (
     <tr className="pr-row">
       <td>

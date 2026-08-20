@@ -16,7 +16,7 @@
 
 import { ghGraphQL } from './githubGraphql'
 import { GhRateLimitError } from './githubFetch'
-import { MAVEN_OWNER } from './repos'
+import { ownerOf } from './repos'
 import { writeResult } from './cache'
 import { classifyAuthor } from './authors'
 import type {
@@ -152,7 +152,7 @@ export async function fetchRepoPrsGraphql(
   }
 
   try {
-    const data = await ghGraphQL<PrsResponse>(PR_QUERY, { owner: MAVEN_OWNER, repo }, token)
+    const data = await ghGraphQL<PrsResponse>(PR_QUERY, { owner: ownerOf(repo), repo }, token)
 
     if (!data.repository) {
       return {
@@ -176,7 +176,7 @@ export async function fetchRepoPrsGraphql(
       return result
     }
 
-    const baseUrl = `https://github.com/${MAVEN_OWNER}/${repo}`
+    const baseUrl = `https://github.com/${ownerOf(repo)}/${repo}`
     const nodes = data.repository.pullRequests.nodes
     const prs: PullRequestInfo[] = nodes.map((n) => {
       const rollup = n.commits.nodes[0]?.commit.statusCheckRollup ?? null

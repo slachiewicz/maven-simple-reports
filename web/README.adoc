@@ -17,7 +17,7 @@
 = Maven Pull Requests & Branches Dashboard (SPA)
 :icons: font
 
-A statically hosted single-page app with two tabs covering the ~98 `apache/maven-*` repositories:
+A statically hosted single-page app with two tabs covering ~157 repositories -- the ~98 `apache/maven-*` ones plus the non-archived `codehaus-plexus` and `mojohaus` repositories:
 
 * *Pull requests* — every open PR (not just Dependabot's), with author, assignee and live build status.
 * *Branches* — stale-branch detection: branches with no recent commits, no open PR, and no protection rule.
@@ -107,7 +107,7 @@ The Netlify functions keep the GitHub App *client secret* server-side; only the 
 ====
 
 Repo filter::
-A regex input narrows the fetch cycle to a subset of `apache/maven-*` repos.
+A regex input narrows the fetch cycle to a subset of the swept repos.
 The pattern is persisted in `localStorage` and applied immediately: previously fetched repos that no longer match are hidden, newly matching repos are queued for the next fetch.
 Useful for keeping a cycle short when you only care about a few repos (e.g. `mvnd|surefire`).
 
@@ -120,7 +120,7 @@ The action is non-destructive: previously fetched entries remain visible until e
 GitHub's GraphQL budget is *point-based*: 5 000 points per hour per token, where a point is roughly one hundred nodes a query could return rather than one request.
 Both tabs draw on that single budget through one shared serial queue (`apiQueue` in `lib/githubFetch.ts`), so a rate-limit backoff triggered by either tab pauses both.
 
-Measured cost per full cycle over ~98 repos:
+Measured cost per full cycle over ~157 repos:
 
 * *Pull requests*: ~1-2 points per repo, so ~100-200 points per 5-minute cycle.
 * *Branches*: ~3-6 points per repo, so ~300-600 points per 10-minute cycle.
@@ -133,7 +133,7 @@ The UI surfaces the remaining budget and any pause state.
 The *Branches* tab (`views/BranchesView.tsx`) surfaces candidates for deletion: branches with no recent activity, no open PR, and no protection rule.
 
 * *One query per repo* fetches up to 100 branch refs (`refs(refPrefix:"refs/heads/", first:100)`), each with its last commit, author, open-PR count, protection status, and ahead/behind counts against the default branch, in a single round trip.
-* *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the fixed 10-minute sweep cadence leaves comfortable headroom across ~98 repos.
+* *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the fixed 10-minute sweep cadence leaves headroom across ~157 repos, though less of it than the ~98-repo list left.
 * *Exclusions* — a branch is never flagged stale if it is:
 . the repository's default branch,
 . protected (detected via `refUpdateRule`, the signal visible without repo-admin access — `branchProtectionRule` needs admin and would be null for every `apache/*` repo), or
@@ -195,7 +195,7 @@ web/
     │   ├── SignInPrompt.tsx     # shown in place of either tab when signed out
     │   └── TokenInput.tsx       # OAuth + PAT settings section
     └── lib/
-        ├── repos.ts             # the apache/maven-* list
+        ├── repos.ts             # repo lists per organisation + ownerOf()
         ├── types.ts
         ├── cache.ts             # localStorage wrapper
         ├── githubFetch.ts       # shared serial queue, backoff, rate-limit pub/sub
@@ -299,6 +299,6 @@ The dashboard used to have a second, REST-based pull-request path so that visito
 It was removed: it needed one inventory call per repo plus two enrichment calls per PR, which exhausted the anonymous 60 req/h budget on the first cycle, and it had to reconstruct by hand the rollup that GraphQL's `statusCheckRollup` returns natively — including the legacy commit statuses Apache Jenkins publishes, which never appear as check-runs.
 
 `pullRequest.commits.last.commit.statusCheckRollup` returns both CheckRun and StatusContext entries in one field, and one query per repo carries the rollup, draft flag, base ref, title, author, assignees and review state together.
-The cost is ~1-2 points per repo against 5 000 points/h, versus roughly 1 170 REST requests for the same data across ~98 repos.
+The cost is ~1-2 points per repo against 5 000 points/h, versus roughly 1 170 REST requests for the same data across ~157 repos.
 
 The trade is explicit: the published page is no longer viewable without signing in.

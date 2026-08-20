@@ -17,7 +17,7 @@
 import { useState } from 'react'
 import { assigneesOf, hasAssigneeData, hasReviewData } from '../lib/types'
 import type { PullRequestInfo, PrResult } from '../lib/types'
-import { MAVEN_OWNER } from '../lib/repos'
+import { ownerOf } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
 import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
@@ -257,7 +257,7 @@ function RepoRows({
   assigneeFilter,
   reviewFilter,
 }: RepoRowsProps) {
-  const repoUrl = `https://github.com/${MAVEN_OWNER}/${repo}/pulls`
+  const repoUrl = `https://github.com/${ownerOf(repo)}/${repo}/pulls`
   const prs = result
     ? result.prs
         .filter((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter, reviewFilter))

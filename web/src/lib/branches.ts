@@ -16,7 +16,7 @@
 
 import { ghGraphQL } from './githubGraphql'
 import { GhRateLimitError } from './githubFetch'
-import { MAVEN_OWNER } from './repos'
+import { ownerOf } from './repos'
 import { readDefaultBranch, writeDefaultBranch, writeBranchResult } from './cache'
 import type { BranchInfo, RepoBranchResult } from './types'
 
@@ -130,7 +130,7 @@ export async function fetchRepoBranches(
     if (!defaultBranch) {
       const meta = await ghGraphQL<DefaultBranchResponse>(
         DEFAULT_BRANCH_QUERY,
-        { owner: MAVEN_OWNER, repo },
+        { owner: ownerOf(repo), repo },
         token,
       )
       if (!meta.repository) return empty({ error: 'Repository not found' })
@@ -148,7 +148,7 @@ export async function fetchRepoBranches(
     try {
       data = await ghGraphQL<BranchesResponse>(
         branchesQuery(true),
-        { owner: MAVEN_OWNER, repo, defaultBranch },
+        { owner: ownerOf(repo), repo, defaultBranch },
         token,
       )
     } catch (err) {
@@ -158,7 +158,7 @@ export async function fetchRepoBranches(
       degraded = true
       data = await ghGraphQL<BranchesResponse>(
         branchesQuery(false),
-        { owner: MAVEN_OWNER, repo, defaultBranch },
+        { owner: ownerOf(repo), repo, defaultBranch },
         token,
       )
     }

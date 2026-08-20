@@ -116,3 +116,94 @@ export const MAVEN_REPOS: readonly string[] = [
   'maven-repository-tools',
   'maven-doxia-ide',
 ]
+
+export const PLEXUS_OWNER = 'codehaus-plexus'
+
+export const PLEXUS_REPOS: readonly string[] = [
+  'codehaus-plexus.github.io',
+  'modello',
+  'plexus-archiver',
+  'plexus-build-api',
+  'plexus-classworlds',
+  'plexus-compiler',
+  'plexus-i18n',
+  'plexus-interactivity',
+  'plexus-interpolation',
+  'plexus-io',
+  'plexus-languages',
+  'plexus-pom',
+  'plexus-resources',
+  'plexus-sec-dispatcher',
+  'plexus-testing',
+  'plexus-utils',
+  'plexus-velocity',
+  'plexus-xml',
+]
+
+export const MOJOHAUS_OWNER = 'mojohaus'
+
+export const MOJOHAUS_REPOS: readonly string[] = [
+  'animal-sniffer',
+  'aspectj-maven-plugin',
+  'build-helper-maven-plugin',
+  'buildnumber-maven-plugin',
+  'buildplan-maven-plugin',
+  'clirr-maven-plugin',
+  'cobertura-maven-plugin',
+  'exec-maven-plugin',
+  'extra-enforcer-rules',
+  'flatten-maven-plugin',
+  'javacc-maven-plugin',
+  'javancss-maven-plugin',
+  'jaxb2-maven-plugin',
+  'jaxws-maven-plugin',
+  'jboss-packaging-maven-plugin',
+  'jdepend-maven-plugin',
+  'jdiff-maven-plugin',
+  'keytool',
+  'l10n-maven-plugin',
+  'license-maven-plugin',
+  'maven-native',
+  'mojo-parent',
+  'mojohaus.github.io',
+  'mrm',
+  'native2ascii-maven-plugin',
+  'osgi-archetype',
+  'properties-maven-plugin',
+  'reproducible-mojohaus',
+  'rpm-maven-plugin',
+  'servicedocgen-maven-plugin',
+  'signatures',
+  'siteskinner-maven-plugin',
+  'taglist-maven-plugin',
+  'templating-maven-plugin',
+  'tidy-maven-plugin',
+  'truezip',
+  'versions',
+  'wagon-maven-plugin',
+  'webstart',
+  'workflow-test',
+  'xml-maven-plugin',
+]
+
+/**
+ * Every repository the dashboard sweeps, in owner order: apache first, then
+ * the Plexus and MojoHaus components Maven builds on.
+ */
+export const ALL_REPOS: readonly string[] = [...MAVEN_REPOS, ...PLEXUS_REPOS, ...MOJOHAUS_REPOS]
+
+const OWNER_BY_REPO: ReadonlyMap<string, string> = new Map([
+  ...MAVEN_REPOS.map((r) => [r, MAVEN_OWNER] as const),
+  ...PLEXUS_REPOS.map((r) => [r, PLEXUS_OWNER] as const),
+  ...MOJOHAUS_REPOS.map((r) => [r, MOJOHAUS_OWNER] as const),
+])
+
+/**
+ * Repository names are the identity used for cache keys and result objects, so
+ * the owner is looked up rather than carried alongside. Names are unique across
+ * the three organisations — `repos.test.ts` holds that line. An unknown name
+ * falls back to `apache`, which is what a hand-typed repo is most likely to be.
+ */
+export function ownerOf(repo: string): string {
+  return OWNER_BY_REPO.get(repo) ?? MAVEN_OWNER
+}

@@ -34,7 +34,7 @@ import {
   startOAuthFlow,
   type StoredOauthTokens,
 } from './lib/oauth'
-import { MAVEN_REPOS } from './lib/repos'
+import { ALL_REPOS } from './lib/repos'
 import type { RateLimitInfo as RL } from './lib/types'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
@@ -52,12 +52,12 @@ function readViewFromUrl(): ViewKey {
 
 function applyFilter(pattern: string): { repos: string[]; invalid: boolean } {
   const trimmed = pattern.trim()
-  if (!trimmed) return { repos: [...MAVEN_REPOS], invalid: false }
+  if (!trimmed) return { repos: [...ALL_REPOS], invalid: false }
   try {
     const re = new RegExp(trimmed)
-    return { repos: MAVEN_REPOS.filter((r) => re.test(r)), invalid: false }
+    return { repos: ALL_REPOS.filter((r) => re.test(r)), invalid: false }
   } catch {
-    return { repos: [...MAVEN_REPOS], invalid: true }
+    return { repos: [...ALL_REPOS], invalid: true }
   }
 }
 
@@ -192,8 +192,9 @@ export function App() {
       <header>
         <h1>Open Maven Pull Requests &amp; Branches</h1>
         <p className="subtitle">
-          Live view of pull requests and branches across {MAVEN_REPOS.length}{' '}
-          <code>apache/maven-*</code> repositories.
+          Live view of pull requests and branches across {ALL_REPOS.length}{' '}
+          <code>apache</code>, <code>codehaus-plexus</code> and <code>mojohaus</code>{' '}
+          repositories.
         </p>
       </header>
 
@@ -212,7 +213,7 @@ export function App() {
         pattern={filter}
         onChange={updateFilter}
         matchCount={activeRepos.length}
-        totalCount={MAVEN_REPOS.length}
+        totalCount={ALL_REPOS.length}
         invalid={filterInvalid}
       />
 

@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **supporting project** (not an MCP server) that publishes reports and statistics about Apache Maven repository pull requests and branches. The primary purpose is to track the status of open PRs (all authors, not just Dependabot) and stale branches across ~98 Apache Maven repositories.
+This is a **supporting project** (not an MCP server) that publishes reports and statistics about Apache Maven repository pull requests and branches. The primary purpose is to track the status of open PRs (all authors, not just Dependabot) and stale branches across ~157 repositories: the ~98 `apache/maven-*` ones plus the
+non-archived `codehaus-plexus` and `mojohaus` repositories they build on.
 
 **Key outputs:**
 - A static **single-page dashboard** (`web/`) with two tabs: *Pull requests* (all open PRs, any author, with live build status) and *Branches* (stale-branch detection). Both go through the GitHub GraphQL API and **both require a token**. This replaces the previous Python-generated `dependabot-prs.html`.
@@ -116,7 +117,7 @@ _Why GraphQL only_ in `web/README.adoc` for what it cost and why it went.
 
 One query per repo returns the PRs *and* their `statusCheckRollup` together, so
 badges arrive with the row rather than a phase later. Measured at **~1-2 points
-per repo**, so a 98-repo sweep costs ~100-200 points against the 5 000/h budget
+per repo**, so a 157-repo sweep costs ~160-320 points against the 5 000/h budget
 — versus roughly 1 170 REST requests for the same data.
 
 `statusCheckRollup` natively rolls up check-runs *and* legacy commit statuses,

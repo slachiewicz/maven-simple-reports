@@ -5,7 +5,8 @@ description: Conventions and known traps for the maven-simple-reports dashboard 
 
 # maven-simple-reports SPA
 
-A static dashboard over ~98 `apache/maven-*` repositories: one tab of open pull
+A static dashboard over ~157 repositories -- `apache/maven-*` plus the
+non-archived `codehaus-plexus` and `mojohaus` ones: one tab of open pull
 requests, one tab of stale branches. No server, no backend — the browser talks to
 `api.github.com` directly, which is why almost every hard problem here is about
 rate limits and caching rather than UI.
@@ -135,8 +136,12 @@ column existed" from "genuinely empty".
   (serialisation, shared backoff) aren't what it replaces. Don't re-litigate
   without new evidence.
 - **Apache 2.0 header** on every new source file, copied from `lib/types.ts`.
-- **`MAVEN_OWNER`** from `lib/repos.ts` — never hardcode `apache`. Repo counts
-  come from `MAVEN_REPOS.length`, never a literal.
+- **`ownerOf(repo)`** from `lib/repos.ts` — never hardcode an owner, and never
+  assume `apache`: the sweep spans three organisations. Repo names carry the
+  identity (cache keys, result objects) and the owner is looked up, which only
+  works while names stay unique across the lists — `repos.test.ts` enforces
+  that, and is why neither org's `.github` profile repo is listed. Repo counts
+  come from `ALL_REPOS.length`, never a literal.
 - **Tests cover pure logic**, in `lib/*.test.ts`, running under `environment:
   'node'` — so there is no `localStorage`; stub it with `vi.stubGlobal`. Note the
   filter bugs above were component logic, so a component test would have earned
