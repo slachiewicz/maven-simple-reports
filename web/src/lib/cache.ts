@@ -16,10 +16,15 @@
 
 import type { DraftFilter } from './prFilters'
 
-const PREFIX = 'gh-cache:v1:'
+// Prefixes kept only so migrateLegacyCache can reclaim what earlier versions
+// wrote: the ETag cache, the archived-repo flags, and the per-PR build-state
+// blob all belonged to the REST pull-request path, which no longer exists.
+const LEGACY_ETAG_PREFIX = 'gh-cache:v1:'
+const LEGACY_ARCHIVED_PREFIX = 'gh-archived:v1:'
+const LEGACY_BUILD_STATE_KEY = 'gh-build:v1'
+const DEFAULT_BRANCH_TTL_MS = 7 * 24 * 60 * 60_000
 const RESULT_PREFIX = 'gh-result:v2:'
 const LEGACY_RESULT_PREFIXES = ['gh-result:v1:']
-const ARCHIVED_PREFIX = 'gh-archived:v1:'
 const FILTER_KEY = 'gh-filter:v1'
 const TOKEN_KEY = 'gh-token:v1'
 const TOKEN_PERSIST_KEY = 'gh-token-persist:v1'
@@ -32,20 +37,6 @@ const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
 const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
 const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
 const STALE_ONLY_KEY = 'gh-stale-only:v1'
-const BUILD_STATE_KEY = 'gh-build:v1'
-
-const ARCHIVED_TTL_MS = 7 * 24 * 60 * 60_000
-const BUILD_STATE_TTL_MS = 7 * 24 * 60 * 60_000
-
-interface ArchivedEntry {
-  archived: boolean
-  checkedAt: number
-}
-
-interface StoredBuildState {
-  state: string
-  fetchedAt: number
-}
 
 // Storage writes fail open so the in-memory app keeps working, but a silent
 // failure is how the archived-repo cache stops sticking and every cycle starts
@@ -63,55 +54,25 @@ function reportQuotaFailure(what: string, err: unknown): void {
   )
 }
 
-interface Entry<T> {
-  etag: string | null
-  body: T
-  fetchedAt: number
-}
-
-// ETag-cached response bodies can be large (full check-runs responses etc.).
-// Keep them in sessionStorage so they don't compete with persisted results
-// for the ~5 MB localStorage budget. The cache survives reloads of the same
-// tab; on tab close it's lost, but the next session simply fetches fresh
-// bodies (no ETag → full response, then re-populate the session cache).
-export function readCache<T>(key: string): Entry<T> | null {
-  try {
-    const raw = sessionStorage.getItem(PREFIX + key)
-    if (!raw) return null
-    return JSON.parse(raw) as Entry<T>
-  } catch {
-    return null
-  }
-}
-
-export function writeCache<T>(key: string, entry: Entry<T>): void {
-  try {
-    sessionStorage.setItem(PREFIX + key, JSON.stringify(entry))
-  } catch (err) {
-    reportQuotaFailure('ETag cache', err)
-  }
-}
-
-export function deleteCache(key: string): void {
-  try {
-    sessionStorage.removeItem(PREFIX + key)
-  } catch {
-    // ignore
-  }
-}
-
-// Migration: earlier versions stored the ETag cache in localStorage, which
-// could exhaust the 5 MB quota and silently break persisted results. Drop
-// any leftover gh-cache entries, plus results left behind by earlier
-// RESULT_PREFIX version bumps (LEGACY_RESULT_PREFIXES), from localStorage so
-// the budget is reclaimed. Idempotent — safe to run every page load.
+// Migration: reclaim localStorage written by versions that no longer match
+// this app. That is the ETag cache an early version kept in localStorage
+// (where it could exhaust the 5 MB quota and silently break persisted
+// results), results left behind by earlier RESULT_PREFIX version bumps, and
+// the archived-repo flags and build-state blob the removed REST path wrote.
+// Idempotent — safe to run every page load.
 export function migrateLegacyCache(): number {
   let removed = 0
   try {
     const stale: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (k && (k.startsWith(PREFIX) || LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))) {
+      if (
+        k &&
+        (k.startsWith(LEGACY_ETAG_PREFIX) ||
+          k.startsWith(LEGACY_ARCHIVED_PREFIX) ||
+          k === LEGACY_BUILD_STATE_KEY ||
+          LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))
+      ) {
         stale.push(k)
       }
     }
@@ -132,10 +93,10 @@ export function clearAllCache(): number {
       if (
         k &&
         (k.startsWith(RESULT_PREFIX) ||
-          k.startsWith(ARCHIVED_PREFIX) ||
           k.startsWith(BRANCH_RESULT_PREFIX) ||
           k.startsWith(DEFAULT_BRANCH_PREFIX) ||
-          k === BUILD_STATE_KEY ||
+          k.startsWith(LEGACY_ARCHIVED_PREFIX) ||
+          k === LEGACY_BUILD_STATE_KEY ||
           LEGACY_RESULT_PREFIXES.some((p) => k.startsWith(p)))
       ) {
         lsKeys.push(k)
@@ -145,40 +106,10 @@ export function clearAllCache(): number {
       localStorage.removeItem(k)
       removed++
     }
-    const ssKeys: string[] = []
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const k = sessionStorage.key(i)
-      if (k && k.startsWith(PREFIX)) ssKeys.push(k)
-    }
-    for (const k of ssKeys) {
-      sessionStorage.removeItem(k)
-      removed++
-    }
   } catch {
     // ignore
   }
   return removed
-}
-
-export function readArchived(repo: string): ArchivedEntry | null {
-  try {
-    const raw = localStorage.getItem(ARCHIVED_PREFIX + repo)
-    if (!raw) return null
-    const entry = JSON.parse(raw) as ArchivedEntry
-    if (Date.now() - entry.checkedAt > ARCHIVED_TTL_MS) return null
-    return entry
-  } catch {
-    return null
-  }
-}
-
-export function writeArchived(repo: string, archived: boolean): void {
-  try {
-    const entry: ArchivedEntry = { archived, checkedAt: Date.now() }
-    localStorage.setItem(ARCHIVED_PREFIX + repo, JSON.stringify(entry))
-  } catch (err) {
-    reportQuotaFailure('archived-repo status', err)
-  }
 }
 
 export function readFilter(): string {
@@ -405,14 +336,14 @@ interface DefaultBranchEntry {
   checkedAt: number
 }
 
-// The default branch name rarely changes, so cache it for the same 7-day TTL
-// used for archived-repo status rather than re-querying it on every fetch.
+// The default branch name rarely changes, so cache it for a week rather than
+// re-querying it on every fetch.
 export function readDefaultBranch(repo: string): string | null {
   try {
     const raw = localStorage.getItem(DEFAULT_BRANCH_PREFIX + repo)
     if (!raw) return null
     const entry = JSON.parse(raw) as DefaultBranchEntry
-    if (Date.now() - entry.checkedAt > ARCHIVED_TTL_MS) return null
+    if (Date.now() - entry.checkedAt > DEFAULT_BRANCH_TTL_MS) return null
     return entry.name
   } catch {
     return null
@@ -488,45 +419,5 @@ export function writeStaleOnly(value: boolean): void {
     localStorage.setItem(STALE_ONLY_KEY, value ? '1' : '0')
   } catch {
     // ignore
-  }
-}
-
-// Build results are keyed by repo#number#headSha (see prBuildKey in pulls.ts),
-// so a stored entry is only ever valid for the commit it was fetched against —
-// a new push naturally produces a new key and the old one just ages out via
-// the TTL. Stored as one JSON blob rather than one localStorage key per PR:
-// at ~536 open PRs, per-PR keys would be slow to enumerate and wasteful.
-export function readBuildStates<T>(): Record<string, T> {
-  try {
-    const raw = localStorage.getItem(BUILD_STATE_KEY)
-    if (!raw) return {}
-    const all = JSON.parse(raw) as Record<string, StoredBuildState>
-    const cutoff = Date.now() - BUILD_STATE_TTL_MS
-    const out: Record<string, T> = {}
-    for (const [k, v] of Object.entries(all)) {
-      if (v && typeof v.fetchedAt === 'number' && v.fetchedAt >= cutoff) {
-        out[k] = v as unknown as T
-      }
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
-
-export function writeBuildStates<T extends { fetchedAt: number }>(
-  states: Record<string, T>,
-): void {
-  try {
-    // Prune on write: keys are head-SHA scoped, so superseded entries would
-    // otherwise accumulate forever as PRs get new pushes.
-    const cutoff = Date.now() - BUILD_STATE_TTL_MS
-    const kept: Record<string, T> = {}
-    for (const [k, v] of Object.entries(states)) {
-      if (v.fetchedAt >= cutoff) kept[k] = v
-    }
-    localStorage.setItem(BUILD_STATE_KEY, JSON.stringify(kept))
-  } catch (err) {
-    reportQuotaFailure('build states', err)
   }
 }

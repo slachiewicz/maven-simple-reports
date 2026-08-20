@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **supporting project** (not an MCP server) that publishes reports and statistics about Apache Maven repository pull requests and branches. The primary purpose is to track the status of open PRs (all authors, not just Dependabot) and stale branches across ~98 Apache Maven repositories.
 
 **Key outputs:**
-- A static **single-page dashboard** (`web/`) with two tabs: *Pull requests* (all open PRs, any author, with live build status, via the GitHub REST API) and *Branches* (stale-branch detection, via the GitHub GraphQL API, requires a token). This replaces the previous Python-generated `dependabot-prs.html`.
+- A static **single-page dashboard** (`web/`) with two tabs: *Pull requests* (all open PRs, any author, with live build status) and *Branches* (stale-branch detection). Both go through the GitHub GraphQL API and **both require a token**. This replaces the previous Python-generated `dependabot-prs.html`.
 - Reports published to GitHub Pages (main) and Netlify (PRs/branches) on push.
 
 Further Python-based reports may live under `scripts/` in the future.
@@ -47,9 +47,9 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
 ### Pipeline
 
-1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com` directly with ETag/`If-None-Match` caching, serial request scheduling, and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the GraphQL client. Output: `web/dist/`.
+1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com/graphql` directly with serial request scheduling and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the only API client. Output: `web/dist/`.
 
-   **Both APIs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so REST and GraphQL never fire concurrently. One consequence: the queue's backoff is global, so a REST 403 also stalls GraphQL even though they draw on separate GitHub budgets.
+   **Both tabs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so they never fire concurrently and a backoff triggered by either pauses both. They also share one 5 000 points/h budget, so that is the correct behaviour rather than a limitation.
 2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
 3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA and copies it into `public/dependabot-prs/`.
 4. **`.github/workflows/publish.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
@@ -102,56 +102,31 @@ The full setup is documented in `web/README.adoc` (sections _Status_, _UI contro
 3. SPA on its origin verifies the CSRF token, POSTs `{code, code_verifier, redirect_uri}` to `/token-exchange`, which calls GitHub with the server-side `client_secret` added and returns the access + refresh tokens.
 4. Access tokens (~8 h) are refreshed transparently via `/token-refresh` before each fetch when their remaining lifetime is < 60 s.
 
-## Fetching pull requests: two paths
+## Fetching pull requests
 
-**Which path runs depends solely on whether a token is present.** Both produce the
-same `PrResult` shape, so nothing downstream knows or cares which ran. In
-`views/PullRequestsView.tsx` all three sweeps are always constructed — React
-forbids conditional hooks — and are selected with `enabled`.
+**A token is mandatory.** Every request goes to GitHub's GraphQL API, which
+rejects unauthenticated callers, so `App.tsx` renders `SignInPrompt` in place of
+either tab when there are no credentials and the app issues no request at all.
+The REST pull-request path that once served anonymous visitors was removed; see
+_Why GraphQL only_ in `web/README.adoc` for what it cost and why it went.
 
-### Authenticated → GraphQL (`lib/pullsGraphql.ts`)
+### `lib/pullsGraphql.ts`
 
 One query per repo returns the PRs *and* their `statusCheckRollup` together, so
-badges arrive with the row rather than a phase later. Measured at **~1 point per
-repo**, so a 98-repo sweep costs ~100 points against the 5 000/h budget — versus
-roughly 1 170 REST requests for the same data.
+badges arrive with the row rather than a phase later. Measured at **~1-2 points
+per repo**, so a 98-repo sweep costs ~100-200 points against the 5 000/h budget
+— versus roughly 1 170 REST requests for the same data.
 
 `statusCheckRollup` natively rolls up check-runs *and* legacy commit statuses,
-which is what the REST path has to reconstruct by hand from two calls. It is
-therefore the more reliable of the two for the Apache Jenkins case.
+which is what the removed REST path had to reconstruct by hand from two calls.
+That is what made it the more reliable of the two for the Apache Jenkins case.
 
 `mapRollupState` maps GitHub's `StatusState`: `SUCCESS` → `SUCCESS`;
 `FAILURE`/`ERROR` → `FAILURE`; `PENDING`/`EXPECTED` → `PENDING`; absent or
 unrecognised → `UNKNOWN`.
 
-### Anonymous → REST, two-phase (`lib/pulls.ts`)
-
-GitHub rejects anonymous GraphQL outright, so the REST path exists to keep the
-published dashboard viewable without a token on the 60 req/h budget. It is
-deliberately two-phase:
-
-1. **Inventory** — one `/pulls` call per repo, so the full table paints quickly
-   with `BuildState: 'UNKNOWN'`.
-2. **Enrichment** — a separate sweep resolving build state per PR, gated on
-   `sweep.pending.length === 0` so it never competes with inventory for the
-   shared queue. Keyed by head SHA (`repo#number#sha`), so an unmoved PR is
-   skipped on later cycles.
-
-The ordering is the point: enrichment is the dominant cost, and an anonymous
-visitor must get a usable table before their budget runs out. Enrichment is
-capped to `MAX_ENRICHED_PRS_PER_REPO` (10) newest PRs per repo — per repo rather
-than globally, so every repo shows some badges instead of later repos starving.
-
-`deriveBuildState` (REST path only) combines `/commits/{sha}/check-runs` with the
-legacy `/commits/{sha}/status`:
-
-- Any failed/timed-out/cancelled run or failed/error status → `FAILURE`
-- Otherwise any queued/in-progress run or pending status → `PENDING`
-- Otherwise any successful/neutral/skipped run or successful status → `SUCCESS`
-- Empty or all-other → `UNKNOWN`
-
-Merge-conflict detection (`/pulls/{n}.mergeable`) is not consulted. See
-`web/README.adoc` _Known limitations_.
+Merge-conflict detection is not consulted. See `web/README.adoc`
+_Known limitations_.
 
 ## Filtering (client-side, zero requests)
 
@@ -189,16 +164,18 @@ against the rate limit.
 
 | Namespace | Storage | Notes |
 |---|---|---|
-| `gh-cache:` | sessionStorage | ETag bodies; kept out of localStorage so they don't eat the ~5 MB budget |
 | `gh-result:v2:` | localStorage | Per-repo `PrResult`; v1 entries are reclaimed by `migrateLegacyCache` |
-| `gh-build:v1` | localStorage | **One blob**, not a key per PR; 7-day TTL, pruned on write since head-SHA keys accumulate |
 | `gh-branches:v1:` | localStorage | Per-repo branch results |
 | `gh-default-branch:v1:` | localStorage | 7-day TTL; avoids a second GraphQL round-trip per repo |
 
-Writers fail open so the app keeps working, but they now warn once per key via
-`reportQuotaFailure` instead of swallowing the error. That silence mattered: when
-the quota fills, `writeArchived` stops sticking and every cycle pays an extra
-call per repo — doubling REST cost invisibly and permanently.
+`migrateLegacyCache` reclaims what superseded generations left behind: the
+`gh-cache:`, `gh-archived:v1:` and `gh-build:v1` families all belonged to the
+removed REST path and are deleted on load rather than left to occupy the budget.
+
+Writers fail open so the app keeps working, but they warn once per key via
+`reportQuotaFailure` instead of swallowing the error. That silence mattered
+once: when the quota filled, the archived-repo cache stopped sticking and every
+cycle paid an extra call per repo — doubling cost invisibly and permanently.
 
 ## Integration with Parent Project
 

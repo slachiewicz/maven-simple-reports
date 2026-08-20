@@ -1,6 +1,6 @@
 ---
 name: maven-reports-spa
-description: Conventions and known traps for the maven-simple-reports dashboard SPA in web/ (Vite + React + TypeScript, GitHub REST and GraphQL). Use this whenever touching anything under web/ — components, hooks, lib/, filters, caching, the sweep loop, or the two PR fetch paths — and also when reviewing changes to it, debugging why the dashboard shows stale or missing data, adding a filter or column, or changing anything about rate limiting, tokens, or polling. Several traps here have already shipped as real bugs; read this before editing rather than after.
+description: Conventions and known traps for the maven-simple-reports dashboard SPA in web/ (Vite + React + TypeScript, GitHub GraphQL). Use this whenever touching anything under web/ — components, hooks, lib/, filters, caching, the sweep loop, or the PR fetch path — and also when reviewing changes to it, debugging why the dashboard shows stale or missing data, adding a filter or column, or changing anything about rate limiting, tokens, or polling. Several traps here have already shipped as real bugs; read this before editing rather than after.
 ---
 
 # maven-simple-reports SPA
@@ -79,26 +79,26 @@ click the states nobody defaults to.
 
 ## Rate limits shape everything
 
-Two GitHub budgets, two fetch paths:
+One budget, one fetch path: **5 000 GraphQL points/h** per token, spent by
+`lib/pullsGraphql.ts` and `lib/branches.ts`.
 
-| Path | When | Budget |
-|---|---|---|
-| REST (`lib/pulls.ts`) | anonymous | 60 req/h |
-| GraphQL (`lib/pullsGraphql.ts`, `lib/branches.ts`) | token present | 5 000 points/h |
+**A token is mandatory.** GitHub rejects anonymous GraphQL outright, so
+`App.tsx` renders `SignInPrompt` instead of either tab when there are no
+credentials. Signed out, the app must issue **zero** requests — that is the
+invariant to check in the network panel, not "the PR tab still works". The REST
+path that once served anonymous visitors was deliberately removed (see _Why
+GraphQL only_ in `web/README.adoc`); do not reintroduce a second fetch path to
+restore the published page for signed-out visitors without asking first.
 
-**Both go through one `SerialQueue`** (`apiQueue`, exported from
+**Everything goes through one `SerialQueue`** (`apiQueue`, exported from
 `lib/githubFetch.ts`). Never bypass it with a bare `fetch`. It provides
-serialisation, the shared 403/429 backoff, and the ETag cache — a request that
-skips it skips all three and will hammer a rate-limited API.
+serialisation and the shared 403/429 backoff — a request that skips it skips
+both and will hammer a rate-limited API.
 
 **`GhRateLimitError` must propagate.** Every `catch` in a fetcher rethrows it so
 the sweep pauses instead of retrying into a wall. Swallowing it into an error
 result is a silent, expensive bug. Grep an existing fetcher before writing a new
 one.
-
-**The anonymous path is not vestigial.** GitHub rejects anonymous GraphQL
-outright, and the published dashboard has to work without a token. Never "simplify"
-by deleting the REST path.
 
 ### Measuring cost
 
@@ -109,18 +109,23 @@ Take a second reading before reporting any number.
 
 ## Caching
 
-Persisted state lives in `lib/cache.ts`. Two things to know:
+Persisted state lives in `lib/cache.ts`, all of it in `localStorage` (~5 MB).
+Two things to know:
 
-- **ETag bodies are in `sessionStorage`**, deliberately, so they don't consume
-  the ~5 MB `localStorage` budget that persisted results need.
 - **Writers fail open but warn once** via `reportQuotaFailure`. The silent version
-  was actively harmful: when the quota fills, `writeArchived` stops sticking and
-  every cycle pays an extra call per repo — doubling REST cost invisibly and
-  permanently.
+  was actively harmful: when the quota filled, the archived-repo cache stopped
+  sticking and every cycle paid an extra call per repo — doubling cost invisibly
+  and permanently.
+- **`migrateLegacyCache` reclaims dead generations** on every load, including the
+  `gh-cache:`, `gh-archived:v1:` and `gh-build:v1` families the removed REST path
+  wrote. Deleting a cache family means adding its key there, not just deleting
+  the reader.
 
 When adding a persisted shape, bump its key version (`gh-result:v2:`) so old
 entries can't be read as the new shape, and reclaim the old prefix in
-`migrateLegacyCache`.
+`migrateLegacyCache`. A field that is *optional* needs no bump — that is the
+whole point of `hasAssigneeData()`, which distinguishes "cached before this
+column existed" from "genuinely empty".
 
 ## Conventions
 
@@ -153,5 +158,5 @@ Check specifically:
 1. **Reload with a warm cache** — it must refetch. A version that fetched nothing
    on reload shipped, and is invisible on a cold load.
 2. **The non-default filter states.**
-3. **Without a token** — the branches tab must show the sign-in panel and issue
-   zero requests, while the PR tab still works.
+3. **Without a token** — both tabs must show the sign-in panel, and the network
+   panel must stay empty. A leftover sweep shows itself here.

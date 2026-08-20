@@ -19,8 +19,10 @@
 
 A statically hosted single-page app with two tabs covering the ~98 `apache/maven-*` repositories:
 
-* *Pull requests* — every open PR (not just Dependabot's), with author and live build status. Calls the GitHub REST API directly from the browser; works without a token.
-* *Branches* — stale-branch detection: branches with no recent commits, no open PR, and no protection rule. Calls the GitHub GraphQL API and requires a token.
+* *Pull requests* — every open PR (not just Dependabot's), with author, assignee and live build status.
+* *Branches* — stale-branch detection: branches with no recent commits, no open PR, and no protection rule.
+
+Both tabs call the GitHub GraphQL API directly from the browser, which rejects unauthenticated requests, so both require a token.
 
 It replaces the previously cron-generated `dependabot-prs.html` page.
 
@@ -33,25 +35,22 @@ Access tokens (~8 h) are refreshed automatically using the long-lived refresh to
 . *Personal Access Token* — manually pasted into the Settings panel.
 No expiry-handling, but works without any backend.
 
-Both are optional for the *Pull requests* tab. Either path lifts the REST API limit from 60 req/h (anonymous) to ~5 000 req/h and shortens the *Pull requests* refresh cycle from 30 min to 5 min.
-The default state is anonymous, so the *Pull requests* tab works for visitors without setup.
+One of the two is *required*: every request the dashboard makes goes to GitHub's GraphQL API, which rejects unauthenticated requests outright.
+Without credentials both tabs render a sign-in prompt and the app issues no request at all.
 
-The *Branches* tab always requires one of the two paths above — GitHub's GraphQL API rejects unauthenticated requests outright, so an anonymous visitor sees a sign-in prompt instead of data. See _Branches_ below.
+Either path draws on the same 5 000 points/h budget, which one repo's pull-request query costs ~1-2 points against.
 
 == Architecture
 
 * *Static SPA* built with Vite + React + TypeScript, deployed to GitHub Pages under `dependabot-prs/`.
 * *Three small Netlify Functions* (`netlify/functions/`) act as the only server-side component, exclusively for the OAuth token exchange and refresh.
 The functions never touch the dashboard's PR data — that still goes browser-to-GitHub directly.
-* *Direct REST calls* to `api.github.com` — no backend, no proxy.
-* *ETag / If-None-Match* caching per URL, persisted in `localStorage`.
-Unchanged responses come back as 304 and reuse the cached body.
+* *Direct GraphQL calls* to `api.github.com/graphql` — no backend, no proxy. `lib/githubGraphql.ts` is the only client.
 * *Serial request scheduling* (one in-flight request at a time) to stay within GitHub's secondary rate-limit guidance.
-* *Backoff on 403/429* using `x-ratelimit-reset` or `Retry-After`.
-* *GraphQL client* (`lib/githubGraphql.ts`) for the Branches tab — same rate-limit pub/sub and backoff plumbing as the REST queue, but posts to `/graphql` and handles GitHub's point-based (rather than request-count) rate limiting.
+* *Backoff on 403/429* using `Retry-After`, and on a `RATE_LIMITED` entry in a 200 response's `errors` array.
 * *Two independent polling loops* (`lib/useSweep.ts`, shared by both tabs) — only the active tab's loop runs; the inactive tab costs nothing until switched to.
-** *Pull requests* (REST): ~30 minutes between full cycles unauthenticated, ~5 minutes with a token configured. An inter-request gap spreads the load across the rate-limit window. Fetching happens in two phases: a cheap per-repo inventory sweep (one call per repo, so the full table renders fast) followed by build-status enrichment keyed by head SHA, so a PR whose head hasn't moved costs nothing on a later cycle.
-** *Branches* (GraphQL): fixed 10-minute cycle, always requires a token.
+** *Pull requests*: fixed 5-minute cycle. One query per repo returns the open PRs with their build-status rollup and assignees together, so a row paints complete rather than filling in over later phases.
+** *Branches*: fixed 10-minute cycle.
 
 == UI controls
 
@@ -97,32 +96,29 @@ The Netlify functions keep the GitHub App *client secret* server-side; only the 
 Repo filter::
 A regex input narrows the fetch cycle to a subset of `apache/maven-*` repos.
 The pattern is persisted in `localStorage` and applied immediately: previously fetched repos that no longer match are hidden, newly matching repos are queued for the next fetch.
-Useful to stay within the unauthenticated 60/h quota by polling only the repos you care about (e.g. `mvnd|surefire`).
+Useful for keeping a cycle short when you only care about a few repos (e.g. `mvnd|surefire`).
 
 Refresh now::
 Re-queues all active repos in the current tab for an immediate refresh and lifts any pending rate-limit backoff.
 The action is non-destructive: previously fetched entries remain visible until each repo is updated in place.
-ETag-cached responses that haven't changed come back as 304 responses (no response body to re-download), so this is cheap when the data is stable.
 
 == Rate limits (important)
 
-This section covers the REST API, used by the *Pull requests* tab. The *Branches* tab uses GraphQL's separate, point-based budget — see _Branches_ below.
+GitHub's GraphQL budget is *point-based*: 5 000 points per hour per token, where a point is roughly one hundred nodes a query could return rather than one request.
+Both tabs draw on that single budget through one shared serial queue (`apiQueue` in `lib/githubFetch.ts`), so a rate-limit backoff triggered by either tab pauses both.
 
-GitHub's unauthenticated REST API limit is 60 requests per hour per IP, *shared* across all visitors going through the same egress IP.
-The *Pull requests* tab touches roughly _N_repos + N_open_PRs_ endpoints per cycle, so the unauthenticated quota will be exhausted on the first refresh.
-That degraded mode is tolerable because:
+Measured cost per full cycle over ~98 repos:
 
-* The first cycle populates the cache; subsequent cycles mostly receive 304 responses.
-* Each repo's last successful result is persisted in `localStorage`, so reloads paint immediately from cache.
-* The UI surfaces the current quota and pause state so users can see when refresh is throttled.
+* *Pull requests*: ~1-2 points per repo, so ~100-200 points per 5-minute cycle.
+* *Branches*: ~3-6 points per repo, so ~300-600 points per 10-minute cycle.
 
-Either authenticated path documented above (OAuth or PAT) lifts the limit to ~5 000/h per token, and is the recommended setup for anything beyond a quick look.
+Each repo's last successful result is persisted in `localStorage`, so a reload paints immediately from cache and then refreshes in place.
+The UI surfaces the remaining budget and any pause state.
 
 == Branches
 
 The *Branches* tab (`views/BranchesView.tsx`) surfaces candidates for deletion: branches with no recent activity, no open PR, and no protection rule.
 
-* *GraphQL, not REST* — `lib/githubGraphql.ts` posts to `https://api.github.com/graphql`. GitHub rejects unauthenticated GraphQL requests outright (unlike REST's 60 req/h anonymous allowance), so this tab always requires a token from either auth path in _Status_. Without one, it shows a sign-in prompt and issues no request.
 * *One query per repo* fetches up to 100 branch refs (`refs(refPrefix:"refs/heads/", first:100)`), each with its last commit, author, open-PR count, protection status, and ahead/behind counts against the default branch, in a single round trip.
 * *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the fixed 10-minute sweep cadence leaves comfortable headroom across ~98 repos.
 * *Exclusions* — a branch is never flagged stale if it is:
@@ -174,7 +170,7 @@ web/
     ├── App.tsx                  # tab routing (?view=), auth state, top-level UI
     ├── styles.css
     ├── views/
-    │   ├── PullRequestsView.tsx # Pull requests tab: two-phase REST sweep, author filter
+    │   ├── PullRequestsView.tsx # Pull requests tab: GraphQL sweep, filter controls
     │   └── BranchesView.tsx     # Branches tab: GraphQL sweep, stale-only + threshold controls
     ├── components/              # presentational
     │   ├── PrTable.tsx
@@ -183,16 +179,16 @@ web/
     │   ├── StatusBadge.tsx
     │   ├── RateLimitInfo.tsx
     │   ├── FilterInput.tsx      # regex repo filter (persisted in localStorage)
+    │   ├── SignInPrompt.tsx     # shown in place of either tab when signed out
     │   └── TokenInput.tsx       # OAuth + PAT settings section
     └── lib/
         ├── repos.ts             # the apache/maven-* list
         ├── types.ts
-        ├── cache.ts             # local/sessionStorage wrapper
-        ├── githubFetch.ts       # serial REST queue, ETag, backoff, rate-limit pub/sub
-        ├── githubGraphql.ts     # GraphQL client (Branches tab), point-based backoff
+        ├── cache.ts             # localStorage wrapper
+        ├── githubFetch.ts       # shared serial queue, backoff, rate-limit pub/sub
+        ├── githubGraphql.ts     # the GraphQL client, point-based backoff
         ├── useSweep.ts          # shared polling loop used by both tabs
-        ├── buildStatus.ts       # check-runs + combined-status → BuildState
-        ├── pulls.ts             # per-repo: list PRs, fetch build state
+        ├── pullsGraphql.ts      # per-repo PR query: PRs + build rollup + assignees
         ├── authors.ts           # Dependabot / bot / human classification
         ├── branches.ts          # per-repo branch fetch, stale predicate
         ├── pkce.ts              # RFC 7636 code verifier + challenge
@@ -240,7 +236,7 @@ For local development, create `web/.env.local` (ignored by Git):
 VITE_GITHUB_CLIENT_ID=Iv23xxxxxxxxxxxxxxxx
 ----
 
-When the variable is unset, the OAuth button is shown disabled with a tooltip and the SPA falls back to anonymous / PAT mode.
+When the variable is unset, the OAuth button is shown disabled with a tooltip and a personal access token is the only way in.
 
 === GitHub App setup (one-time, admin only)
 
@@ -274,43 +270,21 @@ Adjust it when adding new SPA deploy origins — for example, additional Netlify
 
 == Known limitations
 
-* The unauthenticated mode's 60/h limit is shared per IP and will be exhausted quickly under multi-visitor traffic.
+* A token is mandatory: there is no read-only anonymous mode, so the published page shows a sign-in prompt to a first-time visitor rather than data.
 * Access and refresh tokens live in `localStorage` or `sessionStorage` (user choice) — accessible to any script on this origin via XSS.
 A future hardening would move tokens into HTTP-only cookies set by the token-exchange function, requiring credentialed CORS.
-* Build status combines the modern *check-runs* endpoint with the legacy *combined commit status* (used by Apache Jenkins for the maven-box plugin builds).
-A failure in either source flips the PR to FAILURE; this costs one extra REST call per PR.
-* Merge-conflict detection is not implemented (would require an extra `GET /pulls/<n>` call per PR).
+* Merge-conflict detection is not implemented (`pullRequest.mergeable` is computed asynchronously by GitHub and returns `UNKNOWN` until it settles).
 * Only the first 100 branches and first 100 open PRs per repo are fetched — neither paginates. A repo with more than 100 branches shows a "showing the first 100 of _N_" marker in the Branches tab; PRs have no equivalent truncation indicator.
 * No build status is fetched for branches, only for PRs.
 * Branch ahead/behind counts can be missing (shown as `—`) when the comparison query times out; see _Branches_ above.
 * No service worker / push notifications.
 
-== Future options for status fetching
+== Why GraphQL only
 
-The current build-status path is _Option 1_ below: stay on REST, fetch check-runs *and* combined commit status, merge them.
-This keeps the anonymous mode working but costs two requests per PR.
-Two alternative paths are documented here as fallbacks if Option 1 hits its limits.
+The dashboard used to have a second, REST-based pull-request path so that visitors without a token saw something.
+It was removed: it needed one inventory call per repo plus two enrichment calls per PR, which exhausted the anonymous 60 req/h budget on the first cycle, and it had to reconstruct by hand the rollup that GraphQL's `statusCheckRollup` returns natively — including the legacy commit statuses Apache Jenkins publishes, which never appear as check-runs.
 
-Option 2: migrate to GraphQL `statusCheckRollup`::
-GitHub's GraphQL API exposes `pullRequest.commits.last.commit.statusCheckRollup`, which returns *both* CheckRun *and* StatusContext entries in a single rollup.
-A single query per repo can return all PRs with their rollup, draft flag, base ref, title, and author.
-+
-Pros: fixes the Jenkins blind spot for free, fewer total requests, all the metadata in one shot.
-+
-Cons: GraphQL requires authentication (no anonymous mode), uses a *point-based* rate limit rather than request counts (one bad nested query can cost 100+ points), and would need a rewrite of `githubFetch.ts` (different error/retry shape, weaker ETag/304 hit rates).
-+
-Reasonable to consider once OAuth is the dominant access path and anonymous mode is no longer the primary fallback.
-+
-NOTE: `lib/githubGraphql.ts` already exists for the Branches tab, so some of this migration's plumbing cost is already paid — extending it to PR build status is a smaller lift than it would have been before the Branches tab shipped.
+`pullRequest.commits.last.commit.statusCheckRollup` returns both CheckRun and StatusContext entries in one field, and one query per repo carries the rollup, draft flag, base ref, title, author and assignees together.
+The cost is ~1-2 points per repo against 5 000 points/h, versus roughly 1 170 REST requests for the same data across ~98 repos.
 
-Option 3: hybrid REST + GraphQL::
-REST when anonymous (current behavior), GraphQL when authenticated.
-Best functionality for signed-in users without breaking anonymous visitors, but roughly doubles the maintenance surface (two fetch paths, two `BuildState` derivations).
-+
-Worth considering only if anonymous traffic turns out to matter *and* signed-in users would benefit measurably from the GraphQL savings.
-
-== Roadmap (not in MVP)
-
-* Authenticated polling at higher frequency (~3 minutes) and richer data (private repos, conflict status).
-* Hybrid mode: anonymous = sparse cache, authenticated = fresher view.
-* Move OAuth tokens into HTTP-only cookies (set by the token-exchange function) instead of `localStorage`, eliminating XSS exposure of the access token.
+The trade is explicit: the published page is no longer viewable without signing in.

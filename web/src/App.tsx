@@ -39,6 +39,7 @@ import type { RateLimitInfo as RL } from './lib/types'
 import { RateLimitInfo } from './components/RateLimitInfo'
 import { FilterInput } from './components/FilterInput'
 import { TokenInput } from './components/TokenInput'
+import { SignInPrompt } from './components/SignInPrompt'
 import { PullRequestsView } from './views/PullRequestsView'
 import { BranchesView } from './views/BranchesView'
 
@@ -127,7 +128,7 @@ export function App() {
           updateOauth(refreshed)
           return refreshed.access_token
         } catch (err) {
-          console.error('OAuth token refresh failed; falling back to PAT/anonymous', err)
+          console.error('OAuth token refresh failed; falling back to a PAT if one is set', err)
           setOauthError(err instanceof Error ? err.message : String(err))
           updateOauth(null)
         }
@@ -241,11 +242,12 @@ export function App() {
       </nav>
 
       <main>
-        {view === 'prs' ? (
+        {!authenticated ? (
+          <SignInPrompt />
+        ) : view === 'prs' ? (
           <PullRequestsView
             activeRepos={activeRepos}
             getToken={acquireToken}
-            authenticated={authenticated}
             tokenEpoch={tokenEpoch}
           />
         ) : (
@@ -260,7 +262,7 @@ export function App() {
 
       <footer className="muted">
         <p>
-          Static SPA · GitHub REST API · ETag-cached, serial polling. The unauthenticated 60 req/h limit is shared per IP.
+          Static SPA · GitHub GraphQL API · serial polling against the 5 000 points/h budget of whichever credentials you supply.
         </p>
         <p>
           Contribute on GitHub:{' '}

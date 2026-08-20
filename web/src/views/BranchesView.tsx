@@ -34,6 +34,8 @@ const BRANCH_CYCLE_INTERVAL_MS = 10 * 60_000
 interface Props {
   activeRepos: readonly string[]
   getToken: () => Promise<string | undefined>
+  /** Defence in depth: App already renders a sign-in prompt instead of this
+   * view when there are no credentials. */
   hasToken: boolean
   tokenEpoch: number
 }
@@ -72,30 +74,10 @@ export function BranchesView({ activeRepos, getToken, hasToken, tokenEpoch }: Pr
     writeStaleThreshold(days)
   }
 
-  // Must stay above the no-token early return: a hook called after it runs only
-  // on some renders, so the hook count changes when hasToken flips false→true
-  // (i.e. the moment someone pastes a token) and React throws.
   const fetchedCount = useMemo(
     () => activeRepos.filter((r) => sweep.results[r] !== undefined).length,
     [activeRepos, sweep.results],
   )
-
-  if (!hasToken) {
-    return (
-      <div className="signin-prompt">
-        <h2>A GitHub token is required</h2>
-        <p>
-          The branches view uses GitHub's GraphQL API, which rejects
-          unauthenticated requests. Open <strong>Settings</strong> above and
-          either connect with GitHub or paste a personal access token — no scopes
-          are needed for public repositories.
-        </p>
-        <p className="muted">
-          The pull requests tab keeps working without a token.
-        </p>
-      </div>
-    )
-  }
 
   return (
     <>

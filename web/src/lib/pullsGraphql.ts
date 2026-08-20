@@ -82,12 +82,11 @@ export function mapRollupState(state: string | null | undefined): BuildState {
 }
 
 /**
- * Authenticated PR fetch: one GraphQL call per repo returns the open PRs AND
- * their build-status rollup together, instead of the REST path's one
- * inventory call plus two enrichment calls per PR. Returns the same PrResult
- * shape as fetchRepoPrs so nothing downstream needs to know which path
- * produced it. Anonymous callers must keep using the REST path — GitHub
- * rejects anonymous GraphQL outright.
+ * The pull-request fetch: one GraphQL call per repo returns the open PRs AND
+ * their build-status rollup together, at ~1-2 points against the 5 000/h
+ * budget. A token is mandatory — GitHub rejects anonymous GraphQL outright,
+ * which is why the app renders a sign-in prompt rather than any unauthenticated
+ * view.
  */
 export async function fetchRepoPrsGraphql(
   repo: string,

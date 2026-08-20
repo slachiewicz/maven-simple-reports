@@ -15,7 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { migrateLegacyCache, readBuildStates, readDraftFilter, writeBuildStates } from './cache'
+import { migrateLegacyCache, readDraftFilter } from './cache'
 
 // The suite runs under environment: 'node' (see vitest.config.ts), so there is
 // no localStorage global. Provide a minimal in-memory stub sufficient for the
@@ -55,59 +55,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const DAY_MS = 24 * 60 * 60_000
-
-describe('readBuildStates', () => {
-  it('keeps entries within the 7-day TTL and drops older ones', () => {
-    const now = Date.now()
-    fakeLocalStorage.setItem(
-      'gh-build:v1',
-      JSON.stringify({
-        fresh: { state: 'SUCCESS', fetchedAt: now - 1 * DAY_MS },
-        stale: { state: 'FAILURE', fetchedAt: now - 8 * DAY_MS },
-      }),
-    )
-
-    const result = readBuildStates<{ state: string; fetchedAt: number }>()
-
-    expect(Object.keys(result)).toEqual(['fresh'])
-    expect(result.fresh.state).toBe('SUCCESS')
-  })
-
-  it('returns {} on malformed JSON rather than throwing', () => {
-    fakeLocalStorage.setItem('gh-build:v1', '{not valid json')
-
-    expect(() => readBuildStates()).not.toThrow()
-    expect(readBuildStates()).toEqual({})
-  })
-
-  it('returns {} when nothing is stored yet', () => {
-    expect(readBuildStates()).toEqual({})
-  })
-})
-
-describe('writeBuildStates', () => {
-  it('prunes stale entries so the blob cannot grow without bound', () => {
-    const now = Date.now()
-    writeBuildStates({
-      fresh: { state: 'SUCCESS', fetchedAt: now },
-      stale: { state: 'FAILURE', fetchedAt: now - 8 * DAY_MS },
-    })
-
-    const raw = fakeLocalStorage.getItem('gh-build:v1')
-    expect(raw).not.toBeNull()
-    const stored = JSON.parse(raw!) as Record<string, unknown>
-    expect(Object.keys(stored)).toEqual(['fresh'])
-  })
-
-  it('round-trips through readBuildStates', () => {
-    const now = Date.now()
-    writeBuildStates({ 'repo#1#sha': { state: 'PENDING', fetchedAt: now } })
-
-    expect(readBuildStates()).toEqual({ 'repo#1#sha': { state: 'PENDING', fetchedAt: now } })
-  })
-})
-
 describe('readDraftFilter', () => {
   it('returns "all" when nothing is stored yet', () => {
     expect(readDraftFilter()).toBe('all')
@@ -132,6 +79,19 @@ describe('migrateLegacyCache', () => {
     expect(fakeLocalStorage.getItem('gh-cache:v1:some-key')).toBeNull()
     expect(fakeLocalStorage.getItem('gh-result:v1:some-repo')).toBeNull()
     expect(fakeLocalStorage.getItem('gh-result:v2:some-repo')).toBe('{"kept":true}')
+  })
+
+  // The REST pull-request path is gone; its two localStorage families must be
+  // reclaimed rather than left to occupy the ~5 MB budget forever.
+  it('reclaims the archived-repo and build-state keys the REST path wrote', () => {
+    fakeLocalStorage.setItem('gh-archived:v1:maven-compiler-plugin', '{}')
+    fakeLocalStorage.setItem('gh-build:v1', '{}')
+    fakeLocalStorage.setItem('gh-branches:v1:maven-compiler-plugin', '{"kept":true}')
+
+    expect(migrateLegacyCache()).toBe(2)
+    expect(fakeLocalStorage.getItem('gh-archived:v1:maven-compiler-plugin')).toBeNull()
+    expect(fakeLocalStorage.getItem('gh-build:v1')).toBeNull()
+    expect(fakeLocalStorage.getItem('gh-branches:v1:maven-compiler-plugin')).toBe('{"kept":true}')
   })
 
   it('is idempotent — a second run removes nothing further', () => {

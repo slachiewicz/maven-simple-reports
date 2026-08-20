@@ -15,14 +15,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  GhAccessError,
-  GhRateLimitError,
-  clearQueueBackoff,
-  extractMessage,
-  ghFetch,
-  isRateLimited,
-} from './githubFetch'
+import { clearQueueBackoff, extractMessage, isRateLimited } from './githubFetch'
 
 function res(status: number, body: string, headers: Record<string, string> = {}): Response {
   return new Response(body, { status, headers })
@@ -77,49 +70,5 @@ describe('extractMessage', () => {
 
   it('reports something readable for an empty body', () => {
     expect(extractMessage('')).toBe('no message')
-  })
-})
-
-describe('ghFetch 403 handling', () => {
-  it('raises GhRateLimitError when the 403 is a quota rejection', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        res(403, JSON.stringify({ message: 'API rate limit exceeded' }), {
-          'x-ratelimit-remaining': '0',
-        }),
-      ),
-    )
-    await expect(ghFetch('/repos/apache/maven')).rejects.toBeInstanceOf(GhRateLimitError)
-  })
-
-  it('raises GhAccessError when the 403 is a permission failure', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        res(403, JSON.stringify({ message: 'Resource not accessible by integration' })),
-      ),
-    )
-    await expect(ghFetch('/repos/apache/maven')).rejects.toBeInstanceOf(GhAccessError)
-  })
-
-  // A GhAccessError must not set the shared backoff, otherwise one
-  // inaccessible repo stalls the sweep for every other repo behind it.
-  it('leaves the shared queue running after a permission 403', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          res(403, JSON.stringify({ message: 'Resource not accessible by integration' })),
-        )
-        .mockResolvedValueOnce(res(200, JSON.stringify({ ok: true }))),
-    )
-    await expect(ghFetch('/repos/apache/maven')).rejects.toBeInstanceOf(GhAccessError)
-
-    const started = Date.now()
-    const next = await ghFetch<{ ok: boolean }>('/repos/apache/maven-compiler-plugin')
-    expect(next.data.ok).toBe(true)
-    expect(Date.now() - started).toBeLessThan(500)
   })
 })

@@ -14,17 +14,7 @@
  * limitations under the License.
  */
 
-import { readCache, writeCache } from './cache'
 import type { RateLimitInfo } from './types'
-
-const API_BASE = 'https://api.github.com'
-
-export interface FetchResult<T> {
-  data: T
-  status: number
-  fromCache: boolean
-  rateLimit: RateLimitInfo | null
-}
 
 interface QueueItem {
   run: () => Promise<void>
@@ -132,82 +122,6 @@ export function extractMessage(body: string): string {
     // not JSON — fall through
   }
   return body.slice(0, 200) || 'no message'
-}
-
-function computeBackoff(res: Response): number {
-  const retryAfter = res.headers.get('retry-after')
-  if (retryAfter) {
-    const n = Number(retryAfter)
-    if (!Number.isNaN(n)) return Date.now() + n * 1000
-  }
-  const reset = res.headers.get('x-ratelimit-reset')
-  if (reset) {
-    const ms = Number(reset) * 1000
-    if (!Number.isNaN(ms) && ms > Date.now()) return ms
-  }
-  return Date.now() + 60_000
-}
-
-export interface GhFetchOptions {
-  token?: string | null
-  /**
-   * Minimum gap (ms) inserted before this request fires. Used to spread
-   * unauthenticated calls across the rate-limit window.
-   */
-  spaceBeforeMs?: number
-}
-
-export async function ghFetch<T>(path: string, opts: GhFetchOptions = {}): Promise<FetchResult<T>> {
-  return apiQueue.enqueue(async () => {
-    if (opts.spaceBeforeMs && opts.spaceBeforeMs > 0) {
-      await sleep(opts.spaceBeforeMs)
-    }
-
-    const url = path.startsWith('http') ? path : API_BASE + path
-    const cacheKey = url
-    const cached = readCache<T>(cacheKey)
-
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    }
-    if (cached?.etag) headers['If-None-Match'] = cached.etag
-    if (opts.token) headers.Authorization = `Bearer ${opts.token}`
-
-    const res = await fetch(url, { headers, cache: 'no-store' })
-    const rl = parseRateLimit(res.headers)
-    if (rl) publishRateLimit(rl)
-
-    if (res.status === 304 && cached) {
-      return { data: cached.body, status: 304, fromCache: true, rateLimit: rl }
-    }
-
-    if (res.status === 403 || res.status === 429) {
-      // GitHub overloads 403: quota exhausted *and* plain authorization
-      // failures ("Resource not accessible by integration" when a GitHub App
-      // token hits repos the App isn't installed on). Backing off on the
-      // latter turns a permission problem into a silent multi-minute wait
-      // with no error anywhere — so classify before deciding.
-      const body = await res.text().catch(() => '')
-      if (isRateLimited(res, body)) {
-        const until = computeBackoff(res)
-        apiQueue.setBackoff(until)
-        const message = `GitHub API ${res.status} (backoff until ${new Date(until).toLocaleTimeString()})`
-        throw new GhRateLimitError(message, until, res.status)
-      }
-      throw new GhAccessError(`GitHub API ${res.status}: ${extractMessage(body)}`, res.status)
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`GitHub API ${res.status} ${res.statusText}: ${text.slice(0, 200)}`)
-    }
-
-    const etag = res.headers.get('etag')
-    const data = (await res.json()) as T
-    writeCache(cacheKey, { etag, body: data, fetchedAt: Date.now() })
-    return { data, status: res.status, fromCache: false, rateLimit: rl }
-  })
 }
 
 export class GhRateLimitError extends Error {

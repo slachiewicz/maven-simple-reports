@@ -20,14 +20,13 @@ export function RateLimitInfo({ rl }: { rl: RL | null }) {
   if (!rl) return <span className="rate-limit muted">rate limit: unknown</span>
 
   const used = Math.max(0, rl.limit - rl.remaining)
-  // 60/h is the anonymous IP-shared quota — reset time is actionable there.
-  // With a PAT (limit ~5000) reset is rarely relevant and the value can flicker
-  // between resource buckets, so we omit it.
-  const isAnonymous = rl.limit <= 60
-  const low = isAnonymous ? rl.remaining < 5 : rl.remaining < rl.limit * 0.05
+  const low = rl.remaining < rl.limit * 0.05
 
+  // Reset time is only worth the space once the budget is nearly gone: with a
+  // full 5 000-point budget it is noise, and the value can flicker between
+  // resource buckets.
   let resetSuffix = ''
-  if (isAnonymous) {
+  if (low) {
     const resetTime = new Date(rl.resetAt).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
