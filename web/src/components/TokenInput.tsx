@@ -70,14 +70,14 @@ export function TokenInput({
     onClear()
   }
 
-  const authState: 'oauth' | 'pat' | 'anonymous' = oauth
+  const authState: 'oauth' | 'pat' | 'signed-out' = oauth
     ? 'oauth'
     : token
       ? 'pat'
-      : 'anonymous'
+      : 'signed-out'
 
   const storageLabel = (() => {
-    if (authState === 'anonymous') return '—'
+    if (authState === 'signed-out') return '—'
     return persist ? 'localStorage (persistent)' : 'sessionStorage (this tab only)'
   })()
 
@@ -85,12 +85,12 @@ export function TokenInput({
     <details className="settings">
       <summary>
         Settings ·{' '}
-        <span className={authState !== 'anonymous' ? 'auth-on' : 'auth-off'}>
+        <span className={authState !== 'signed-out' ? 'auth-on' : 'auth-off'}>
           {authState === 'oauth'
             ? 'authenticated (GitHub OAuth)'
             : authState === 'pat'
               ? 'authenticated (PAT)'
-              : 'anonymous'}
+              : 'not signed in'}
         </span>
       </summary>
       <div className="settings-body">
