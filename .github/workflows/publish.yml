@@ -87,10 +87,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
-      - name: Run tests
+      - name: Run lint and tests
         working-directory: ./web
         run: |
           npm ci
+          npm run lint
           npm test
 
   build-spa:

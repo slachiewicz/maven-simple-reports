@@ -36,7 +36,7 @@ See `web/README.adoc` for architecture, rate-limit handling, and roadmap.
 
 ### Testing the workflow
 
-The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → Publish Reports → Run workflow). The previous hourly cron schedule has been removed — the SPA polls itself in the browser.
+The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → Publish → Run workflow). The previous hourly cron schedule has been removed — the SPA polls itself in the browser.
 
 ## Requirements
 
@@ -52,7 +52,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
    **Both APIs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so REST and GraphQL never fire concurrently. One consequence: the queue's backoff is global, so a REST 403 also stalls GraphQL even though they draw on separate GitHub budgets.
 2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
 3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA and copies it into `public/dependabot-prs/`.
-4. **`.github/workflows/publish-reports.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
+4. **`.github/workflows/publish.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
 
 ### Directory layout
 
