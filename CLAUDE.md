@@ -40,7 +40,7 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 
 ## Requirements
 
-- **Node.js 22+** and npm (for the SPA build)
+- **Node.js 22.12+** and npm (for the SPA build)
 - **Python 3** and **GitHub CLI (`gh`)** — required by future Python-based report scripts under `scripts/`
 
 ## Project Architecture
