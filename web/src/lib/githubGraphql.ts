@@ -14,7 +14,15 @@
  * limitations under the License.
  */
 
-import { GhRateLimitError, apiQueue, parseRateLimit, publishRateLimit } from './githubFetch'
+import {
+  GhAccessError,
+  GhRateLimitError,
+  apiQueue,
+  extractMessage,
+  isRateLimited,
+  parseRateLimit,
+  publishRateLimit,
+} from './githubFetch'
 
 const GRAPHQL_URL = 'https://api.github.com/graphql'
 
@@ -55,12 +63,18 @@ export async function ghGraphQL<T>(
     if (rl) publishRateLimit({ ...rl, resource: 'graphql' })
 
     if (res.status === 403 || res.status === 429) {
-      const retryAfter = Number(res.headers.get('retry-after'))
-      const until = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Date.now() + retryAfter * 1000
-        : Date.now() + 60_000
-      apiQueue.setBackoff(until)
-      throw new GhRateLimitError(`GitHub GraphQL ${res.status}`, until, res.status)
+      // Same 403 overload as the REST path: an insufficiently scoped token is
+      // a permission problem to surface, not a throttle to wait out.
+      const body = await res.text().catch(() => '')
+      if (isRateLimited(res, body)) {
+        const retryAfter = Number(res.headers.get('retry-after'))
+        const until = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Date.now() + retryAfter * 1000
+          : Date.now() + 60_000
+        apiQueue.setBackoff(until)
+        throw new GhRateLimitError(`GitHub GraphQL ${res.status}`, until, res.status)
+      }
+      throw new GhAccessError(`GitHub GraphQL ${res.status}: ${extractMessage(body)}`, res.status)
     }
 
     if (!res.ok) {
