@@ -267,11 +267,11 @@ export function App() {
         <p>
           Contribute on GitHub:{' '}
           <a
-            href="https://github.com/aschemaven/maven-simple-reports"
+            href="https://github.com/slachiewicz/maven-simple-reports"
             target="_blank"
             rel="noopener noreferrer"
           >
-            aschemaven/maven-simple-reports
+            slachiewicz/maven-simple-reports
           </a>
         </p>
       </footer>

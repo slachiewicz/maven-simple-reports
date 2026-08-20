@@ -26,7 +26,9 @@ import {
 // gap here turns the function into an open redirect that leaks an OAuth code.
 describe('originAllowed', () => {
   it.each([
-    'https://aschemaven.github.io',
+    'https://slachiewicz.github.io',
+    'https://www.lachiewicz.com',
+    'https://lachiewicz.com',
     'https://maven-simple-reports.netlify.app',
     'https://pr-9--maven-simple-reports.netlify.app',
     'https://feature-pr-assignee--maven-simple-reports.netlify.app',
@@ -43,7 +45,9 @@ describe('originAllowed', () => {
     ['a preview-alias suffix attack', 'https://x--maven-simple-reports.netlify.app.evil.io'],
     ['a prefix attack', 'https://evilmaven-simple-reports.netlify.app'],
     ['plain http on the production host', 'http://maven-simple-reports.netlify.app'],
-    ['a look-alike Pages host', 'https://aschemaven.github.io.evil.com'],
+    ['a look-alike Pages host', 'https://slachiewicz.github.io.evil.com'],
+    ['a look-alike custom domain', 'https://lachiewicz.com.evil.io'],
+    ['a subdomain of the custom domain', 'https://x.lachiewicz.com'],
     ['localhost without a port', 'http://localhost'],
     ['a path appended to an allowed origin', 'https://maven-simple-reports.netlify.app/evil'],
   ])('rejects %s', (_label, origin) => {

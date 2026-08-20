@@ -20,12 +20,15 @@
 // back to an origin we recognise — preventing the function from being used
 // as an open redirect.
 const ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
-  /^https:\/\/aschemaven\.github\.io$/,
+  /^https:\/\/slachiewicz\.github\.io$/,
+  // The Pages site redirects to this custom domain, so it — not the
+  // github.io host — is the origin the SPA actually runs on and the one that
+  // arrives in the OAuth state.
+  /^https:\/\/(www\.)?lachiewicz\.com$/,
   /^https:\/\/maven-simple-reports\.netlify\.app$/,
   /^https:\/\/[a-z0-9-]+--maven-simple-reports\.netlify\.app$/,
   /^http:\/\/localhost:\d+$/,
   /^http:\/\/127\.0\.0\.1:\d+$/,
-  // Future: /^https:\/\/.*\.aschemann\.net$/
 ]
 
 export function originAllowed(origin: string | null | undefined): origin is string {

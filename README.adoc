@@ -23,7 +23,7 @@ Currently, a Dependabot PR dashboard (single-page app) and a Maven 4 adoption re
 == Dependabot PR dashboard (SPA)
 
 The primary user-facing report — open Dependabot PRs across the Apache Maven repositories with live build status — is a static single-page app under `web/`.
-It replaces the previous Python-generated `dependabot-prs.html` and is published to https://aschemaven.github.io/maven-simple-reports/dependabot-prs[].
+It replaces the previous Python-generated `dependabot-prs.html` and is published to https://slachiewicz.github.io/maven-simple-reports/dependabot-prs[].
 
 See xref:web/README.adoc[] for architecture, rate-limit handling, and local development.
 
