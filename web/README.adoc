@@ -49,7 +49,7 @@ The functions never touch the dashboard's PR data — that still goes browser-to
 * *Serial request scheduling* (one in-flight request at a time) to stay within GitHub's secondary rate-limit guidance.
 * *Backoff on 403/429* using `Retry-After`, and on a `RATE_LIMITED` entry in a 200 response's `errors` array.
 * *Two independent polling loops* (`lib/useSweep.ts`, shared by both tabs) — only the active tab's loop runs; the inactive tab costs nothing until switched to.
-** *Pull requests*: fixed 5-minute cycle. One query per repo returns the open PRs with their build-status rollup and assignees together, so a row paints complete rather than filling in over later phases.
+** *Pull requests*: fixed 5-minute cycle. One query per repo returns the open PRs with their build-status rollup, assignees and review state together, so a row paints complete rather than filling in over later phases.
 ** *Branches*: fixed 10-minute cycle.
 
 == UI controls
@@ -59,9 +59,22 @@ Two tabs, *Pull requests* (default) and *Branches*, selected via a query paramet
 Only the active tab's sweep loop runs; switching tabs doesn't lose the other tab's data — results are persisted in `localStorage` and rehydrate instantly on return.
 Browser back/forward moves between tabs by re-reading the URL.
 
-Author filter (Pull requests tab)::
-Three buttons — *All* (default), *Dependabot*, *People* — filter the PR table by author, with a live count on each button.
-Classification trusts the GitHub API's `user.type` field for bots and pattern-matches Dependabot's login; anything else is *People*.
+Pull request filters::
+Four controls narrow the already-fetched table, costing no requests. Each carries a live count computed with the *other* filters applied, so a count states what clicking it would actually yield.
++
+* *Author* — *All* (default), *Dependabot*, *People*. Classification trusts the GitHub API's `user.type` field for bots and pattern-matches Dependabot's login; anything else is *People*.
+* *Draft* — *All* (default), *Ready*, *Draft*.
+* *Review* — *All* (default), *Approved*, *By you*, *Not approved*. *By you* is the subset of *Approved* you personally signed off on. See _Review state_ below.
+* *Assignee* — *All* (default), *Assigned*, *Unassigned*, or one login. A dropdown rather than buttons, because the logins are discovered as the sweep progresses.
++
+All four persist in `localStorage`.
+
+Review state (Pull requests tab)::
+The *Review* column shows the PR's `reviewDecision` — *✓ Approved*, *✗ Changes requested*, *Review required*, or *—* when nobody has reviewed — and tags your own approval with a *you* chip.
+Both come from the same per-repo query as everything else, as scalar fields that cost no extra points.
++
+The *you* chip reads `viewerLatestReview`, which is your latest review of any kind: if you approve and then leave a comment-only review, the approval still stands (and the column still says *Approved*) but the chip drops, because your latest review is now a comment.
+A dismissed approval likewise stops being marked, which is correct.
 
 Stale-only / threshold (Branches tab)::
 A *Stale only* checkbox, checked by default, restricts the branch table to stale branches. The age threshold defaults to *90 days* and is editable inline (1-3650); both settings persist in `localStorage`.
@@ -188,8 +201,9 @@ web/
         ├── githubFetch.ts       # shared serial queue, backoff, rate-limit pub/sub
         ├── githubGraphql.ts     # the GraphQL client, point-based backoff
         ├── useSweep.ts          # shared polling loop used by both tabs
-        ├── pullsGraphql.ts      # per-repo PR query: PRs + build rollup + assignees
+        ├── pullsGraphql.ts      # per-repo PR query: PRs + rollup + assignees + reviews
         ├── authors.ts           # Dependabot / bot / human classification
+        ├── reviews.ts           # approval state + the review filter predicate
         ├── branches.ts          # per-repo branch fetch, stale predicate
         ├── pkce.ts              # RFC 7636 code verifier + challenge
         └── oauth.ts             # OAuth start / complete / refresh, talks to functions
@@ -284,7 +298,7 @@ A future hardening would move tokens into HTTP-only cookies set by the token-exc
 The dashboard used to have a second, REST-based pull-request path so that visitors without a token saw something.
 It was removed: it needed one inventory call per repo plus two enrichment calls per PR, which exhausted the anonymous 60 req/h budget on the first cycle, and it had to reconstruct by hand the rollup that GraphQL's `statusCheckRollup` returns natively — including the legacy commit statuses Apache Jenkins publishes, which never appear as check-runs.
 
-`pullRequest.commits.last.commit.statusCheckRollup` returns both CheckRun and StatusContext entries in one field, and one query per repo carries the rollup, draft flag, base ref, title, author and assignees together.
+`pullRequest.commits.last.commit.statusCheckRollup` returns both CheckRun and StatusContext entries in one field, and one query per repo carries the rollup, draft flag, base ref, title, author, assignees and review state together.
 The cost is ~1-2 points per repo against 5 000 points/h, versus roughly 1 170 REST requests for the same data across ~98 repos.
 
 The trade is explicit: the published page is no longer viewable without signing in.

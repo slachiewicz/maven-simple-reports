@@ -23,9 +23,11 @@ import {
   readAuthorFilter,
   readAssigneeFilter,
   readDraftFilter,
+  readReviewFilter,
   writeAuthorFilter,
   writeAssigneeFilter,
   writeDraftFilter,
+  writeReviewFilter,
 } from '../lib/cache'
 import type { AuthorFilter } from '../lib/authors'
 import { matchesAuthorFilter } from '../lib/authors'
@@ -41,6 +43,8 @@ import {
   collectAssignees,
   matchesAssigneeFilter,
 } from '../lib/assignees'
+import { type ReviewFilter, isApproved, isApprovedByViewer, matchesReviewFilter } from '../lib/reviews'
+import { hasReviewData } from '../lib/types'
 
 // One GraphQL call per repo costs ~1-2 points against the 5 000/h budget, so
 // a 5 min cycle over ~98 repos leaves plenty of headroom.
@@ -50,6 +54,15 @@ const DRAFT_OPTIONS: Array<{ key: DraftFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'ready', label: 'Ready' },
   { key: 'draft', label: 'Draft' },
+]
+
+// "By you" is a subset of "Approved", not a fourth disjoint bucket: it answers
+// "which of these did I already sign off on" without a second control.
+const REVIEW_OPTIONS: Array<{ key: ReviewFilter; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'mine', label: 'By you' },
+  { key: 'unapproved', label: 'Not approved' },
 ]
 
 interface Props {
@@ -62,6 +75,7 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
   const [authorFilter, setAuthorFilterState] = useState<AuthorFilter>(() => readAuthorFilter())
   const [draftFilter, setDraftFilterState] = useState<DraftFilter>(() => readDraftFilter())
   const [assigneeFilter, setAssigneeFilterState] = useState<string>(() => readAssigneeFilter())
+  const [reviewFilter, setReviewFilterState] = useState<ReviewFilter>(() => readReviewFilter())
 
   // Hydrate from any prior tab's persisted results so a freshly opened tab
   // shows data instantly (even before its own fetch completes). Also run the
@@ -117,24 +131,46 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
     for (const pr of allPrs) {
       if (!matchesDraftFilter(pr.isDraft, draftFilter)) continue
       if (!matchesAssigneeFilter(pr, assigneeFilter)) continue
+      if (!matchesReviewFilter(pr, reviewFilter)) continue
       counts.all++
       if (pr.authorClass === 'dependabot') counts.dependabot++
       else if (pr.authorClass === 'human') counts.humans++
     }
     return counts
-  }, [allPrs, draftFilter, assigneeFilter])
+  }, [allPrs, draftFilter, assigneeFilter, reviewFilter])
 
   const draftCounts = useMemo(() => {
     const counts: Record<DraftFilter, number> = { all: 0, ready: 0, draft: 0 }
     for (const pr of allPrs) {
       if (!matchesAuthorFilter(pr.authorClass, authorFilter)) continue
       if (!matchesAssigneeFilter(pr, assigneeFilter)) continue
+      if (!matchesReviewFilter(pr, reviewFilter)) continue
       counts.all++
       if (pr.isDraft) counts.draft++
       else counts.ready++
     }
     return counts
-  }, [allPrs, authorFilter, assigneeFilter])
+  }, [allPrs, authorFilter, assigneeFilter, reviewFilter])
+
+  const reviewCounts = useMemo(() => {
+    const counts: Record<ReviewFilter, number> = { all: 0, approved: 0, mine: 0, unapproved: 0 }
+    for (const pr of allPrs) {
+      if (!matchesAuthorFilter(pr.authorClass, authorFilter)) continue
+      if (!matchesDraftFilter(pr.isDraft, draftFilter)) continue
+      if (!matchesAssigneeFilter(pr, assigneeFilter)) continue
+      counts.all++
+      // A row cached before the column existed is unknown, so it counts under
+      // All and nowhere else — the same rule matchesReviewFilter applies.
+      if (!hasReviewData(pr)) continue
+      if (isApproved(pr)) {
+        counts.approved++
+        if (isApprovedByViewer(pr)) counts.mine++
+      } else {
+        counts.unapproved++
+      }
+    }
+    return counts
+  }, [allPrs, authorFilter, draftFilter, assigneeFilter])
 
   // The dropdown lists everyone seen so far, plus the stored value even when
   // the cycle has not yet reached a repo that mentions them — otherwise a
@@ -166,6 +202,11 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
     writeAssigneeFilter(next)
   }
 
+  const setReviewFilter = (next: ReviewFilter) => {
+    setReviewFilterState(next)
+    writeReviewFilter(next)
+  }
+
   const visibleResults = useMemo(
     () => Object.values(activeResults).filter((r) => activeRepoSet.has(r.repo)),
     [activeResults, activeRepoSet],
@@ -186,6 +227,12 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
         onChange={setDraftFilter}
         ariaLabel="Filter pull requests by draft status"
         options={DRAFT_OPTIONS.map((opt) => ({ ...opt, count: draftCounts[opt.key] }))}
+      />
+      <SegmentedControl
+        value={reviewFilter}
+        onChange={setReviewFilter}
+        ariaLabel="Filter pull requests by review state"
+        options={REVIEW_OPTIONS.map((opt) => ({ ...opt, count: reviewCounts[opt.key] }))}
       />
       <label className="assignee-filter">
         Assignee{' '}
@@ -226,6 +273,7 @@ export function PullRequestsView({ activeRepos, getToken, tokenEpoch }: Props) {
         authorFilter={authorFilter}
         draftFilter={draftFilter}
         assigneeFilter={assigneeFilter}
+        reviewFilter={reviewFilter}
       />
     </>
   )

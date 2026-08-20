@@ -18,7 +18,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { PrTable } from './PrTable'
-import type { BuildState, PrResult, PullRequestInfo } from '../lib/types'
+import type {
+  BuildState,
+  PrResult,
+  PullRequestInfo,
+  ReviewDecision,
+  ViewerReviewState,
+} from '../lib/types'
 import type { AuthorClass } from '../lib/authors'
 import { writeHideEmpty } from '../lib/cache'
 
@@ -41,6 +47,8 @@ interface PrFixture {
   createdAt: string
   isDraft: boolean
   buildState: BuildState
+  reviewDecision?: ReviewDecision
+  viewerReviewState?: ViewerReviewState
 }
 
 function makePr(fixture: PrFixture): PullRequestInfo {
@@ -53,7 +61,19 @@ function makePr(fixture: PrFixture): PullRequestInfo {
     headSha: 'deadbeef',
     buildStateFetchedAt: null,
     assignees: [],
+    reviewDecision: fixture.reviewDecision ?? 'NONE',
+    viewerReviewState: fixture.viewerReviewState ?? 'NONE',
   }
+}
+
+// Cell text by column, for assertions that must name one column rather than
+// the whole row — "?" and "—" now appear in both Assignee and Review.
+const COLUMN = { title: 0, author: 1, assignee: 2, review: 3 } as const
+
+function cellText(column: keyof typeof COLUMN): string[] {
+  return [...document.querySelectorAll('tr.pr-row')].map(
+    (row) => row.querySelectorAll('td')[COLUMN[column]]?.textContent?.trim() ?? '',
+  )
 }
 
 function makeResults(entries: Record<string, PullRequestInfo[]>): Record<string, PrResult> {
@@ -104,6 +124,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -148,6 +169,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="draft"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -180,6 +202,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="draft"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -193,6 +216,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="humans"
         draftFilter="draft"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -224,6 +248,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -265,6 +290,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="dependabot"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -292,6 +318,7 @@ describe('PrTable hide-empty + filter interaction', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
@@ -347,6 +374,7 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="slachiewicz"
       />,
     )
@@ -365,6 +393,7 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="__any__"
       />,
     )
@@ -383,6 +412,7 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="__none__"
       />,
     )
@@ -407,6 +437,7 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="__none__"
       />,
     )
@@ -420,6 +451,7 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="__any__"
       />,
     )
@@ -436,11 +468,147 @@ describe('assignee filter', () => {
         inFlight={null}
         authorFilter="all"
         draftFilter="all"
+        reviewFilter="all"
         assigneeFilter="all"
       />,
     )
 
-    expect(screen.getByText('?')).toBeTruthy()
-    expect(screen.queryByText('—')).toBeNull()
+    expect(cellText('assignee')).toEqual(['?'])
+  })
+})
+
+describe('review filter', () => {
+  // Same rule as every other filter here: the bugs hide in the non-default
+  // options, and the hide-empty predicate has to agree with row rendering.
+  const base = {
+    number: 1,
+    title: 'Some change',
+    author: 'alice',
+    authorClass: 'human' as const,
+    createdAt: '2026-08-01T00:00:00Z',
+    isDraft: false,
+    buildState: 'SUCCESS' as const,
+  }
+
+  const allRepos = ['approved-by-you', 'approved-by-someone', 'unreviewed']
+
+  function results() {
+    return makeResults({
+      'approved-by-you': [
+        makePr({
+          ...base,
+          repo: 'approved-by-you',
+          reviewDecision: 'APPROVED',
+          viewerReviewState: 'APPROVED',
+        }),
+      ],
+      'approved-by-someone': [
+        makePr({ ...base, repo: 'approved-by-someone', reviewDecision: 'APPROVED' }),
+      ],
+      unreviewed: [makePr({ ...base, repo: 'unreviewed', reviewDecision: 'REVIEW_REQUIRED' })],
+    })
+  }
+
+  function renderWith(reviewFilter: 'all' | 'approved' | 'mine' | 'unapproved') {
+    writeHideEmpty(true)
+    render(
+      <PrTable
+        allRepos={allRepos}
+        results={results()}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        reviewFilter={reviewFilter}
+        assigneeFilter="all"
+      />,
+    )
+  }
+
+  it('keeps every repo under "All"', () => {
+    renderWith('all')
+
+    for (const repo of allRepos) expect(screen.getByText(repo)).toBeTruthy()
+  })
+
+  it('hides repos whose PRs are all unapproved under "Approved"', () => {
+    renderWith('approved')
+
+    expect(screen.getByText('approved-by-you')).toBeTruthy()
+    expect(screen.getByText('approved-by-someone')).toBeTruthy()
+    expect(screen.queryByText('unreviewed')).toBeNull()
+  })
+
+  it('keeps only the viewer\'s own approvals under "By you"', () => {
+    renderWith('mine')
+
+    expect(screen.getByText('approved-by-you')).toBeTruthy()
+    expect(screen.queryByText('approved-by-someone')).toBeNull()
+    expect(screen.queryByText('unreviewed')).toBeNull()
+  })
+
+  it('keeps everything not approved under "Not approved"', () => {
+    renderWith('unapproved')
+
+    expect(screen.getByText('unreviewed')).toBeTruthy()
+    expect(screen.queryByText('approved-by-you')).toBeNull()
+    expect(screen.queryByText('approved-by-someone')).toBeNull()
+  })
+
+  it('marks the viewer\'s own approval and leaves other approvals unmarked', () => {
+    render(
+      <PrTable
+        allRepos={allRepos}
+        results={results()}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        reviewFilter="all"
+        assigneeFilter="all"
+      />,
+    )
+
+    // Rows follow the table's alphabetical repo order: approved-by-someone,
+    // approved-by-you, unreviewed.
+    expect(cellText('review')).toEqual(['✓ Approved', '✓ Approved you', 'Review required'])
+  })
+
+  // The cache-compatibility case, mirroring the assignee column: an entry
+  // persisted before this column existed is unknown, and must not be counted
+  // as unapproved on the strength of data that was never fetched.
+  it('excludes a pre-review cache entry from every option and renders "?"', () => {
+    const stale = makePr({ ...base, repo: 'stale' })
+    delete stale.reviewDecision
+    delete stale.viewerReviewState
+    const staleResults = makeResults({ stale: [stale] })
+
+    writeHideEmpty(true)
+    for (const filter of ['approved', 'mine', 'unapproved'] as const) {
+      const { unmount } = render(
+        <PrTable
+          allRepos={['stale']}
+          results={staleResults}
+          inFlight={null}
+          authorFilter="all"
+          draftFilter="all"
+          reviewFilter={filter}
+          assigneeFilter="all"
+        />,
+      )
+      expect(screen.queryByText('stale')).toBeNull()
+      unmount()
+    }
+
+    render(
+      <PrTable
+        allRepos={['stale']}
+        results={staleResults}
+        inFlight={null}
+        authorFilter="all"
+        draftFilter="all"
+        reviewFilter="all"
+        assigneeFilter="all"
+      />,
+    )
+    expect(cellText('review')).toEqual(['?'])
   })
 })

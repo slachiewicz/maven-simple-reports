@@ -465,6 +465,31 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Marks the viewer's own approval. Kept a chip rather than a colour variant so
+   it reads without relying on colour alone. */
+.pr-chip-mine {
+  color: var(--success-fg);
+  border-color: var(--success-fg);
+  margin-right: 0;
+}
+
+.review {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.review-approved {
+  color: var(--success-fg);
+}
+
+.review-changes {
+  color: var(--danger-fg);
+}
+
+.review-required {
+  color: var(--warn-fg);
+}
+
 footer {
   margin-top: 32px;
   font-size: 12px;

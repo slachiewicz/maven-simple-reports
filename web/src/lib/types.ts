@@ -30,6 +30,24 @@ export interface RateLimitInfo {
   resource: 'rest' | 'graphql'
 }
 
+/**
+ * GitHub's `PullRequestReviewDecision`, plus `NONE` standing in for the null
+ * the API returns when no review has been submitted and none is required.
+ */
+export type ReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | 'NONE'
+
+/**
+ * The state of *your* latest review on a PR, from `viewerLatestReview`, with
+ * `NONE` for "you have not reviewed it".
+ */
+export type ViewerReviewState =
+  | 'APPROVED'
+  | 'CHANGES_REQUESTED'
+  | 'COMMENTED'
+  | 'DISMISSED'
+  | 'PENDING'
+  | 'NONE'
+
 export interface PrAssignee {
   login: string
   avatarUrl: string
@@ -62,6 +80,14 @@ export interface PullRequestInfo {
    * tell the two apart and `assigneesOf()` to read the list safely.
    */
   assignees?: PrAssignee[]
+  /**
+   * Optional for the same reason as `assignees`: entries persisted before the
+   * review column existed have no such field, and `undefined` means "unknown",
+   * not "nobody has reviewed it". Use `hasReviewData()` to tell them apart.
+   */
+  reviewDecision?: ReviewDecision
+  /** See `reviewDecision` for why this is optional. */
+  viewerReviewState?: ViewerReviewState
 }
 
 /**
@@ -76,6 +102,14 @@ export function hasAssigneeData(pr: PullRequestInfo): boolean {
 /** Null-safe accessor tolerating pre-assignee entries from `localStorage`. */
 export function assigneesOf(pr: PullRequestInfo): PrAssignee[] {
   return pr.assignees ?? []
+}
+
+/**
+ * True once a PR has been fetched by a version that knows about reviews, so a
+ * stale entry renders "?" instead of being claimed as unreviewed.
+ */
+export function hasReviewData(pr: PullRequestInfo): boolean {
+  return pr.reviewDecision !== undefined
 }
 
 export interface PrResult {

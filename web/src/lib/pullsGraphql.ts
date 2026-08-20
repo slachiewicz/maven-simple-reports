@@ -19,7 +19,13 @@ import { GhRateLimitError } from './githubFetch'
 import { MAVEN_OWNER } from './repos'
 import { writeResult } from './cache'
 import { classifyAuthor } from './authors'
-import type { BuildState, PullRequestInfo, PrResult } from './types'
+import type {
+  BuildState,
+  PullRequestInfo,
+  PrResult,
+  ReviewDecision,
+  ViewerReviewState,
+} from './types'
 
 const PR_PAGE_SIZE = 100
 
@@ -33,6 +39,8 @@ query($owner:String!, $repo:String!) {
         number title createdAt updatedAt isDraft url
         baseRefName headRefOid
         author { login __typename }
+        reviewDecision
+        viewerLatestReview { state }
         assignees(first:10) { nodes { login avatarUrl url } }
         commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
       }
@@ -51,6 +59,8 @@ interface PrNode {
   baseRefName: string
   headRefOid: string
   author: { login: string; __typename: string } | null
+  reviewDecision?: string | null
+  viewerLatestReview?: { state: string } | null
   assignees?: { nodes: Array<{ login: string; avatarUrl: string; url: string }> }
   commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> }
 }
@@ -63,8 +73,47 @@ interface PrsResponse {
 }
 
 /**
- * Maps GraphQL's StatusState rollup onto the REST-derived BuildState so both
- * fetch paths agree on the same badge for the same commit.
+ * Both review fields are scalar reads on the PullRequest node — no connection,
+ * no page size — so they add nothing to the query's point cost. Measured
+ * against apache/maven-compiler-plugin: cost 2 with them, cost 2 without.
+ */
+export function mapReviewDecision(decision: string | null | undefined): ReviewDecision {
+  switch (decision) {
+    case 'APPROVED':
+    case 'CHANGES_REQUESTED':
+    case 'REVIEW_REQUIRED':
+      return decision
+    // null is what GitHub returns when nothing has been submitted and the base
+    // branch requires no review, which is the common case here.
+    default:
+      return 'NONE'
+  }
+}
+
+/**
+ * `viewerLatestReview` is the viewer's latest review of *any* kind, so an
+ * approval followed by a comment-only review reads back as COMMENTED even
+ * though the approval still stands and `reviewDecision` still says APPROVED.
+ * The alternative needs a `viewer { login }` lookup and a reviews connection;
+ * this stays free, and only APPROVED counts as "approved by you" — which also
+ * makes a dismissed approval correctly stop counting.
+ */
+export function mapViewerReviewState(state: string | null | undefined): ViewerReviewState {
+  switch (state) {
+    case 'APPROVED':
+    case 'CHANGES_REQUESTED':
+    case 'COMMENTED':
+    case 'DISMISSED':
+    case 'PENDING':
+      return state
+    default:
+      return 'NONE'
+  }
+}
+
+/**
+ * Maps GraphQL's StatusState rollup onto BuildState, which is what the badge
+ * column renders.
  */
 export function mapRollupState(state: string | null | undefined): BuildState {
   switch (state) {
@@ -149,6 +198,9 @@ export async function fetchRepoPrsGraphql(
         headSha: n.headRefOid,
         buildState: mapRollupState(rollup?.state),
         buildStateFetchedAt: rollup ? Date.now() : null,
+        // Always set, never left undefined — see the assignees note below.
+        reviewDecision: mapReviewDecision(n.reviewDecision),
+        viewerReviewState: mapViewerReviewState(n.viewerLatestReview?.state),
         // Always set, never left undefined: an empty array is "nobody is
         // assigned", while undefined is reserved for cache entries written
         // before this field existed. See hasAssigneeData().

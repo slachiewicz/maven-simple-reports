@@ -130,15 +130,18 @@ _Known limitations_.
 
 ## Filtering (client-side, zero requests)
 
-Three controls filtering already-fetched data. The first two are segmented
+Four controls filtering already-fetched data. The first three are segmented
 controls rendered by `components/SegmentedControl.tsx` (`role="radiogroup"`);
-the third is a dropdown, because its options are discovered at runtime:
+the fourth is a dropdown, because its options are discovered at runtime:
 
 - **Author** — All / Dependabot / People (`lib/authors.ts`). Bot-ness comes from
   the API's `type` field, never from pattern-matching the login, so a user called
   `robotics-fan` is not misfiled. "People" excludes *all* bots, so
   `dependabot + people` is usually less than `all`.
 - **Draft** — All / Ready / Draft (`lib/prFilters.ts`).
+- **Review** — All / Approved / By you / Not approved (`lib/reviews.ts`). "By
+  you" is a *subset* of Approved, not a fourth bucket, so the two counts overlap
+  by design. Approved and Not approved partition everything known.
 - **Assignee** — All / Assigned / Unassigned / one login (`lib/assignees.ts`).
   The login list is collected from whatever the current cycle has fetched, so it
   grows as the sweep progresses.
@@ -146,13 +149,28 @@ the third is a dropdown, because its options are discovered at runtime:
 Each segmented control's counts are computed with the *other* filters already
 applied, so a count states what clicking it would actually yield.
 
+`PullRequestInfo.reviewDecision` and `.viewerReviewState` come from
+`reviewDecision` and `viewerLatestReview` on the GraphQL `PullRequest` node.
+Both are scalar reads — no connection, no page size — so they cost nothing:
+measured at cost 2 with and without them on `apache/maven-compiler-plugin`.
+
+`viewerLatestReview` is the viewer's latest review of *any* kind. An approval
+followed by a comment-only review reads back as `COMMENTED` while
+`reviewDecision` still says `APPROVED`, so the "you" marker drops even though
+the approval stands. The alternative needs a `viewer { login }` lookup and a
+reviews connection; only `APPROVED` counts as yours, which also makes a
+dismissed approval correctly stop counting.
+
 `PullRequestInfo.assignees` is deliberately optional. Entries persisted before
 the column existed have no such field, and `undefined` means "unknown", *not*
 "unassigned" — `hasAssigneeData()` separates the two so a stale row renders "?"
 and is excluded from both Assigned and Unassigned rather than being claimed as
 nobody's. Making the field required would have forced a `gh-result:` version
 bump, discarding every repo's last known state and burning a full refetch
-against the rate limit.
+against the rate limit. `reviewDecision` and `viewerReviewState` follow the
+same rule, via `hasReviewData()`: a stale row renders "?" and falls out of
+Approved, By you *and* Not approved — claiming a PR is unapproved on the
+strength of data never fetched is the same mistake.
 
 > **Trap, shipped and fixed twice.** `PrTable`'s "hide repos without PRs" test and
 > its row rendering MUST use the same predicate — `matchesFilters()`. When they

@@ -15,6 +15,7 @@
  */
 
 import type { DraftFilter } from './prFilters'
+import type { ReviewFilter } from './reviews'
 
 // Prefixes kept only so migrateLegacyCache can reclaim what earlier versions
 // wrote: the ETag cache, the archived-repo flags, and the per-PR build-state
@@ -33,6 +34,7 @@ const OAUTH_KEY = 'gh-oauth:v1'
 const AUTHOR_FILTER_KEY = 'gh-author-filter:v1'
 const DRAFT_FILTER_KEY = 'gh-draft-filter:v1'
 const ASSIGNEE_FILTER_KEY = 'gh-assignee-filter:v1'
+const REVIEW_FILTER_KEY = 'gh-review-filter:v1'
 const BRANCH_RESULT_PREFIX = 'gh-branches:v1:'
 const DEFAULT_BRANCH_PREFIX = 'gh-default-branch:v1:'
 const STALE_THRESHOLD_KEY = 'gh-stale-threshold:v1'
@@ -308,6 +310,25 @@ export function writeAssigneeFilter(filter: string): void {
     localStorage.setItem(ASSIGNEE_FILTER_KEY, filter)
   } catch (err) {
     reportQuotaFailure('assignee filter', err)
+  }
+}
+
+const REVIEW_FILTERS: ReviewFilter[] = ['all', 'approved', 'mine', 'unapproved']
+
+export function readReviewFilter(): ReviewFilter {
+  try {
+    const raw = localStorage.getItem(REVIEW_FILTER_KEY)
+    return REVIEW_FILTERS.find((f) => f === raw) ?? 'all'
+  } catch {
+    return 'all'
+  }
+}
+
+export function writeReviewFilter(filter: ReviewFilter): void {
+  try {
+    localStorage.setItem(REVIEW_FILTER_KEY, filter)
+  } catch (err) {
+    reportQuotaFailure('review filter', err)
   }
 }
 

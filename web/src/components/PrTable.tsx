@@ -15,13 +15,14 @@
  */
 
 import { useState } from 'react'
-import { assigneesOf, hasAssigneeData } from '../lib/types'
+import { assigneesOf, hasAssigneeData, hasReviewData } from '../lib/types'
 import type { PullRequestInfo, PrResult } from '../lib/types'
 import { MAVEN_OWNER } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
 import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
 import { matchesAssigneeFilter } from '../lib/assignees'
+import { type ReviewFilter, isApprovedByViewer, matchesReviewFilter } from '../lib/reviews'
 import { StatusBadge } from './StatusBadge'
 
 const STALE_THRESHOLD_MS = 60 * 60_000
@@ -96,11 +97,13 @@ function matchesFilters(
   authorFilter: AuthorFilter,
   draftFilter: DraftFilter,
   assigneeFilter: string,
+  reviewFilter: ReviewFilter,
 ): boolean {
   return (
     matchesAuthorFilter(pr.authorClass, authorFilter) &&
     matchesDraftFilter(pr.isDraft, draftFilter) &&
-    matchesAssigneeFilter(pr, assigneeFilter)
+    matchesAssigneeFilter(pr, assigneeFilter) &&
+    matchesReviewFilter(pr, reviewFilter)
   )
 }
 
@@ -111,6 +114,7 @@ interface Props {
   authorFilter: AuthorFilter
   draftFilter: DraftFilter
   assigneeFilter: string
+  reviewFilter: ReviewFilter
 }
 
 export function PrTable({
@@ -120,6 +124,7 @@ export function PrTable({
   authorFilter,
   draftFilter,
   assigneeFilter,
+  reviewFilter,
 }: Props) {
   const sorted = [...allRepos].sort((a, b) => a.localeCompare(b))
   // Explicit per-repo overrides. Missing key → default: expanded iff the repo
@@ -159,7 +164,9 @@ export function PrTable({
         const r = results[repo]
         if (!r) return true
         if (r.error) return true
-        return r.prs.some((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter))
+        return r.prs.some((p) =>
+          matchesFilters(p, authorFilter, draftFilter, assigneeFilter, reviewFilter),
+        )
       })
     : sorted
 
@@ -200,6 +207,7 @@ export function PrTable({
             <th>Title</th>
             <th>Author</th>
             <th>Assignee</th>
+            <th>Review</th>
             <th>Date</th>
             <th>Build status</th>
             <th>PR</th>
@@ -217,6 +225,7 @@ export function PrTable({
               authorFilter={authorFilter}
               draftFilter={draftFilter}
               assigneeFilter={assigneeFilter}
+              reviewFilter={reviewFilter}
             />
           ))}
         </tbody>
@@ -234,6 +243,7 @@ interface RepoRowsProps {
   authorFilter: AuthorFilter
   draftFilter: DraftFilter
   assigneeFilter: string
+  reviewFilter: ReviewFilter
 }
 
 function RepoRows({
@@ -245,11 +255,12 @@ function RepoRows({
   authorFilter,
   draftFilter,
   assigneeFilter,
+  reviewFilter,
 }: RepoRowsProps) {
   const repoUrl = `https://github.com/${MAVEN_OWNER}/${repo}/pulls`
   const prs = result
     ? result.prs
-        .filter((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter))
+        .filter((p) => matchesFilters(p, authorFilter, draftFilter, assigneeFilter, reviewFilter))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     : []
   const counts = countBuildStates(prs)
@@ -262,7 +273,7 @@ function RepoRows({
   return (
     <>
       <tr className={className}>
-        <td colSpan={6}>
+        <td colSpan={7}>
           <button
             type="button"
             className="repo-toggle"
@@ -351,6 +362,9 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
       <td className="nowrap">
         <AssigneeCell pr={pr} />
       </td>
+      <td className="nowrap">
+        <ReviewCell pr={pr} />
+      </td>
       <td className="nowrap" title={`Opened ${pr.createdAt}`}>
         {formatPrDate(pr.createdAt)}
       </td>
@@ -366,6 +380,44 @@ function PrRow({ pr }: { pr: PullRequestInfo }) {
       </td>
     </tr>
   )
+}
+
+/**
+ * Approval state, with the viewer's own approval called out: on a dashboard
+ * spanning ~98 repos, "someone approved this" and "I approved this" lead to
+ * very different next actions.
+ *
+ * An absent `reviewDecision` means the entry was cached before this column
+ * existed, which is not the same as nobody having reviewed — "?" rather than
+ * "—", exactly as the assignee column does.
+ */
+function ReviewCell({ pr }: { pr: PullRequestInfo }) {
+  if (!hasReviewData(pr)) {
+    return (
+      <span className="muted" title="Cached before reviews were recorded; refreshes on the next fetch">
+        ?
+      </span>
+    )
+  }
+  const mine = isApprovedByViewer(pr) && (
+    <span className="pr-chip pr-chip-mine" title="You approved this pull request">
+      you
+    </span>
+  )
+  switch (pr.reviewDecision) {
+    case 'APPROVED':
+      return (
+        <>
+          <span className="review review-approved">✓ Approved</span> {mine}
+        </>
+      )
+    case 'CHANGES_REQUESTED':
+      return <span className="review review-changes">✗ Changes requested</span>
+    case 'REVIEW_REQUIRED':
+      return <span className="review review-required">Review required</span>
+    default:
+      return <span className="muted">—</span>
+  }
 }
 
 /**

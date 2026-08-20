@@ -15,7 +15,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchRepoPrsGraphql, mapRollupState } from './pullsGraphql'
+import {
+  fetchRepoPrsGraphql,
+  mapReviewDecision,
+  mapRollupState,
+  mapViewerReviewState,
+} from './pullsGraphql'
 import { GhRateLimitError, clearQueueBackoff } from './githubFetch'
 
 function mockResponse(body: unknown, headers: Record<string, string> = {}): Response {
@@ -36,6 +41,8 @@ function prNode(overrides: Record<string, unknown> = {}) {
     baseRefName: 'master',
     headRefOid: 'abc123',
     author: { login: 'dependabot[bot]', __typename: 'Bot' },
+    reviewDecision: null,
+    viewerLatestReview: null,
     assignees: { nodes: [] },
     commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
     ...overrides,
@@ -86,7 +93,72 @@ describe('mapRollupState', () => {
   })
 })
 
+describe('mapReviewDecision', () => {
+  it('passes GitHub\'s three decision values through unchanged', () => {
+    expect(mapReviewDecision('APPROVED')).toBe('APPROVED')
+    expect(mapReviewDecision('CHANGES_REQUESTED')).toBe('CHANGES_REQUESTED')
+    expect(mapReviewDecision('REVIEW_REQUIRED')).toBe('REVIEW_REQUIRED')
+  })
+
+  // null is the common case: no review submitted and none required by the base
+  // branch. It is "nobody has reviewed", not "unknown" — the PR was fetched.
+  it('maps null, undefined, and an unrecognised value to NONE', () => {
+    expect(mapReviewDecision(null)).toBe('NONE')
+    expect(mapReviewDecision(undefined)).toBe('NONE')
+    expect(mapReviewDecision('SOMETHING_NEW')).toBe('NONE')
+  })
+})
+
+describe('mapViewerReviewState', () => {
+  it('passes every review state through unchanged', () => {
+    expect(mapViewerReviewState('APPROVED')).toBe('APPROVED')
+    expect(mapViewerReviewState('CHANGES_REQUESTED')).toBe('CHANGES_REQUESTED')
+    expect(mapViewerReviewState('COMMENTED')).toBe('COMMENTED')
+    expect(mapViewerReviewState('DISMISSED')).toBe('DISMISSED')
+    expect(mapViewerReviewState('PENDING')).toBe('PENDING')
+  })
+
+  it('maps an absent review to NONE', () => {
+    expect(mapViewerReviewState(null)).toBe('NONE')
+    expect(mapViewerReviewState(undefined)).toBe('NONE')
+  })
+})
+
 describe('fetchRepoPrsGraphql', () => {
+  it('carries the review decision and the viewer\'s own review onto the PR', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        mockResponse(
+          repoResponse([
+            prNode({ reviewDecision: 'APPROVED', viewerLatestReview: { state: 'APPROVED' } }),
+          ]),
+        ),
+      ),
+    )
+    const result = await fetchRepoPrsGraphql('maven', 'tok')
+    expect(result.prs[0].reviewDecision).toBe('APPROVED')
+    expect(result.prs[0].viewerReviewState).toBe('APPROVED')
+  })
+
+  // Both fields must be set rather than left undefined: undefined is reserved
+  // for entries cached before the column existed, which the UI renders as "?".
+  it('records an unreviewed PR as NONE rather than leaving the fields undefined', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse(repoResponse([prNode()]))))
+    const result = await fetchRepoPrsGraphql('maven', 'tok')
+    expect(result.prs[0].reviewDecision).toBe('NONE')
+    expect(result.prs[0].viewerReviewState).toBe('NONE')
+  })
+
+  it('asks for both review fields in the query', async () => {
+    const spy = vi.fn().mockResolvedValue(mockResponse(repoResponse([prNode()])))
+    vi.stubGlobal('fetch', spy)
+    await fetchRepoPrsGraphql('maven', 'tok')
+    const body = JSON.parse(spy.mock.calls[0][1].body as string) as { query: string }
+    expect(body.query).toContain('reviewDecision')
+    expect(body.query).toContain('viewerLatestReview')
+  })
+
   it('returns an error-carrying result and does not call fetch when there is no token', async () => {
     const spy = vi.fn()
     vi.stubGlobal('fetch', spy)
