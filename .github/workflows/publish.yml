@@ -78,10 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -101,7 +101,7 @@ jobs:
       VITE_GITHUB_CLIENT_ID: ${{ vars.VITE_GITHUB_CLIENT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # web/dist is a pure function of the web/ sources, so cache it keyed
       # by their content hash. A hit restores the built SPA in seconds and
@@ -111,14 +111,14 @@ jobs:
       # so the publish jobs never need an artifact-retention fallback.
       - name: Restore SPA build cache
         id: spa-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: web/dist
           key: spa-dist-${{ hashFiles('web/**') }}
 
       - name: Set up Node.js
         if: steps.spa-cache.outputs.cache-hit != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -132,7 +132,7 @@ jobs:
           npm run build
 
       - name: Upload SPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spa-dist
           path: web/dist/
@@ -151,7 +151,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # build-spa always runs (cache-restore or rebuild), so this run's
       # spa-dist artifact is always present — no retention fallback needed.
@@ -172,7 +172,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
@@ -185,13 +185,13 @@ jobs:
           fi
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ./public
 
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   publish-netlify:
     runs-on: ubuntu-latest
@@ -202,7 +202,7 @@ jobs:
       && needs.build-spa.result == 'success'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # build-spa always runs. Its cache key is hashFiles('web/**'), so a
       # preview whose web/ matches main restores main's cached SPA, while a
@@ -224,7 +224,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
@@ -253,7 +253,7 @@ jobs:
 
       - name: Deploy to Netlify
         id: netlify-deploy
-        uses: nwtgck/actions-netlify@v2
+        uses: nwtgck/actions-netlify@v4
         with:
           publish-dir: './public'
           functions-dir: './netlify/functions'
