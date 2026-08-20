@@ -137,6 +137,7 @@ function BranchRow({ branch }: { branch: BranchInfo }) {
       </td>
       <td className="nowrap">
         <a href={repoUrl} target="_blank" rel="noreferrer">
+          <span className="muted">{ownerOf(branch.repo)}/</span>
           {branch.repo}
         </a>
       </td>

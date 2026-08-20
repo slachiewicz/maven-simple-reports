@@ -364,6 +364,19 @@ code {
   white-space: nowrap;
 }
 
+.pr-table .org-header td {
+  background: var(--row-alt);
+  border-top: 2px solid var(--border);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding-top: 12px;
+}
+
+.pr-table .org-header td a {
+  color: inherit;
+}
+
 .pr-table .repo-header td {
   background: var(--row-alt);
   font-weight: 600;

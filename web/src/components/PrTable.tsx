@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { assigneesOf, hasAssigneeData, hasReviewData } from '../lib/types'
 import type { PullRequestInfo, PrResult } from '../lib/types'
-import { ownerOf } from '../lib/repos'
+import { groupByOwner, ownerOf } from '../lib/repos'
 import { readHideEmpty, writeHideEmpty } from '../lib/cache'
 import { type AuthorFilter, matchesAuthorFilter } from '../lib/authors'
 import { type DraftFilter, matchesDraftFilter } from '../lib/prFilters'
@@ -170,8 +170,17 @@ export function PrTable({
       })
     : sorted
 
+  // Grouped from `visible`, never from the full list, so an organisation whose
+  // repos have all been hidden or filtered away contributes no heading.
+  const groups = groupByOwner(visible)
+
   const hiddenCount = sorted.length - visible.length
   const truncated = sorted.filter((repo) => results[repo]?.truncated)
+
+  const prCountOf = (repo: string): number =>
+    (results[repo]?.prs ?? []).filter((p) =>
+      matchesFilters(p, authorFilter, draftFilter, assigneeFilter, reviewFilter),
+    ).length
 
   return (
     <div className="pr-table-wrap">
@@ -214,23 +223,56 @@ export function PrTable({
           </tr>
         </thead>
         <tbody>
-          {visible.map((repo) => (
-            <RepoRows
-              key={repo}
-              repo={repo}
-              result={results[repo]}
-              isInFlight={inFlight === repo}
-              collapsed={isCollapsed(repo)}
-              onToggle={() => toggle(repo)}
-              authorFilter={authorFilter}
-              draftFilter={draftFilter}
-              assigneeFilter={assigneeFilter}
-              reviewFilter={reviewFilter}
-            />
+          {groups.map((group) => (
+            <Fragment key={`org:${group.owner}`}>
+              <OrgHeader
+                owner={group.owner}
+                repoCount={group.repos.length}
+                prCount={group.repos.reduce((total, repo) => total + prCountOf(repo), 0)}
+              />
+              {group.repos.map((repo) => (
+                <RepoRows
+                  key={repo}
+                  repo={repo}
+                  result={results[repo]}
+                  isInFlight={inFlight === repo}
+                  collapsed={isCollapsed(repo)}
+                  onToggle={() => toggle(repo)}
+                  authorFilter={authorFilter}
+                  draftFilter={draftFilter}
+                  assigneeFilter={assigneeFilter}
+                  reviewFilter={reviewFilter}
+                />
+              ))}
+            </Fragment>
           ))}
         </tbody>
       </table>
     </div>
+  )
+}
+
+interface OrgHeaderProps {
+  owner: string
+  repoCount: number
+  prCount: number
+}
+
+// The PR count sums the same matchesFilters() rows the repo headers count, so
+// the organisation total and the repo totals under it can never disagree.
+function OrgHeader({ owner, repoCount, prCount }: OrgHeaderProps) {
+  return (
+    <tr className="org-header">
+      <td colSpan={7}>
+        <a href={`https://github.com/${owner}`} target="_blank" rel="noreferrer">
+          {owner}
+        </a>
+        <span className="muted">
+          {' '}
+          · {repoCount} repo{repoCount === 1 ? '' : 's'} · {prCount} PR{prCount === 1 ? '' : 's'}
+        </span>
+      </td>
+    </tr>
   )
 }
 

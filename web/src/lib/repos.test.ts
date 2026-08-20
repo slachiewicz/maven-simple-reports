@@ -25,6 +25,7 @@ import {
   MOJOHAUS_REPOS,
   PLEXUS_OWNER,
   PLEXUS_REPOS,
+  groupByOwner,
   ownerOf,
 } from './repos'
 
@@ -64,5 +65,33 @@ describe('ownerOf', () => {
 
   it('falls back to apache for an unknown repository', () => {
     expect(ownerOf('not-a-listed-repo')).toBe(MAVEN_OWNER)
+  })
+})
+
+describe('groupByOwner', () => {
+  it('orders groups apache, codehaus-plexus, mojohaus', () => {
+    const groups = groupByOwner(['versions', 'plexus-utils', 'maven-compiler-plugin'])
+    expect(groups.map((g) => g.owner)).toEqual([MAVEN_OWNER, PLEXUS_OWNER, MOJOHAUS_OWNER])
+  })
+
+  it('keeps the given order within a group', () => {
+    const [apache] = groupByOwner(['maven-surefire', 'maven-compiler-plugin'])
+    expect(apache.repos).toEqual(['maven-surefire', 'maven-compiler-plugin'])
+  })
+
+  // The whole reason the grouping lives here: the caller passes what it is
+  // about to render, so a heading with nothing under it cannot be produced.
+  it('drops owners with no repos in the list', () => {
+    const groups = groupByOwner(['plexus-utils'])
+    expect(groups).toEqual([{ owner: PLEXUS_OWNER, repos: ['plexus-utils'] }])
+  })
+
+  it('returns no groups for an empty list', () => {
+    expect(groupByOwner([])).toEqual([])
+  })
+
+  it('covers every repo exactly once', () => {
+    const grouped = groupByOwner(ALL_REPOS).flatMap((g) => g.repos)
+    expect(grouped.slice().sort()).toEqual([...ALL_REPOS].sort())
   })
 })

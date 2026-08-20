@@ -207,3 +207,44 @@ const OWNER_BY_REPO: ReadonlyMap<string, string> = new Map([
 export function ownerOf(repo: string): string {
   return OWNER_BY_REPO.get(repo) ?? MAVEN_OWNER
 }
+
+/** Owners in the order the dashboard groups them: apache first, then the rest. */
+export const OWNERS: readonly string[] = [MAVEN_OWNER, PLEXUS_OWNER, MOJOHAUS_OWNER]
+
+export interface OwnerGroup {
+  owner: string
+  repos: string[]
+}
+
+/**
+ * Splits a repo list into owner groups, keeping the order within each group and
+ * dropping owners with nothing in the list.
+ *
+ * Dropping the empties is the point: the caller passes the repos it is about to
+ * render — after the filter and the "hide repos without PRs" test — so an
+ * organisation whose repos have all been filtered away cannot leave a heading
+ * stranded above nothing. That bug has shipped twice at the repo level; here it
+ * is ruled out by construction rather than by remembering.
+ */
+export function groupByOwner(repos: readonly string[]): OwnerGroup[] {
+  const byOwner = new Map<string, string[]>()
+  for (const repo of repos) {
+    const owner = ownerOf(repo)
+    const group = byOwner.get(owner)
+    if (group) group.push(repo)
+    else byOwner.set(owner, [repo])
+  }
+
+  const groups: OwnerGroup[] = []
+  for (const owner of OWNERS) {
+    const repos = byOwner.get(owner)
+    if (repos) {
+      groups.push({ owner, repos })
+      byOwner.delete(owner)
+    }
+  }
+  // An owner outside OWNERS cannot arise from ALL_REPOS, but ownerOf() answers
+  // for any string, so anything left over is appended rather than dropped.
+  for (const [owner, repos] of byOwner) groups.push({ owner, repos })
+  return groups
+}
