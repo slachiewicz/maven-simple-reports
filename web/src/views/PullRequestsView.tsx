@@ -47,8 +47,11 @@ import { type ReviewFilter, isApproved, isApprovedByViewer, matchesReviewFilter 
 import { hasReviewData } from '../lib/types'
 
 // One GraphQL call per repo costs ~1-2 points against the 5 000/h budget, so
-// a 5 min cycle over ~98 repos leaves plenty of headroom.
-const CYCLE_INTERVAL_MS = 5 * 60_000
+// an hourly cycle over ~157 repos spends ~160-320 of it. The cadence is set by
+// what a reader needs rather than by what the budget allows: a dashboard of
+// open PRs does not change meaningfully inside an hour, and `refreshNow` is
+// there for the times it has.
+const CYCLE_INTERVAL_MS = 60 * 60_000
 
 const DRAFT_OPTIONS: Array<{ key: DraftFilter; label: string }> = [
   { key: 'all', label: 'All' },

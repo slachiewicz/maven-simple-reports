@@ -27,9 +27,10 @@ import {
 import type { RepoBranchResult } from '../lib/types'
 import { BranchTable } from '../components/BranchTable'
 
-// GraphQL costs ~3-6 points per repo against a 5 000/h budget, so a 10 min
-// cadence leaves comfortable headroom for ~98 repos.
-const BRANCH_CYCLE_INTERVAL_MS = 10 * 60_000
+// GraphQL costs ~3-6 points per repo against a 5 000/h budget, so an hourly
+// cycle over ~157 repos spends ~470-940 of it. Branches move slower than PRs,
+// and this is the more expensive of the two sweeps.
+const BRANCH_CYCLE_INTERVAL_MS = 60 * 60_000
 
 interface Props {
   activeRepos: readonly string[]

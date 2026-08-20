@@ -49,8 +49,8 @@ The functions never touch the dashboard's PR data — that still goes browser-to
 * *Serial request scheduling* (one in-flight request at a time) to stay within GitHub's secondary rate-limit guidance.
 * *Backoff on 403/429* using `Retry-After`, and on a `RATE_LIMITED` entry in a 200 response's `errors` array.
 * *Two independent polling loops* (`lib/useSweep.ts`, shared by both tabs) — only the active tab's loop runs; the inactive tab costs nothing until switched to.
-** *Pull requests*: fixed 5-minute cycle. One query per repo returns the open PRs with their build-status rollup, assignees and review state together, so a row paints complete rather than filling in over later phases.
-** *Branches*: fixed 10-minute cycle.
+** *Pull requests*: fixed 1-hour cycle. One query per repo returns the open PRs with their build-status rollup, assignees and review state together, so a row paints complete rather than filling in over later phases.
+** *Branches*: fixed 1-hour cycle.
 
 == UI controls
 
@@ -122,8 +122,8 @@ Both tabs draw on that single budget through one shared serial queue (`apiQueue`
 
 Measured cost per full cycle over ~157 repos:
 
-* *Pull requests*: ~1-2 points per repo, so ~100-200 points per 5-minute cycle.
-* *Branches*: ~3-6 points per repo, so ~300-600 points per 10-minute cycle.
+* *Pull requests*: ~1-2 points per repo, so ~160-320 points per hourly cycle.
+* *Branches*: ~3-6 points per repo, so ~470-940 points per hourly cycle.
 
 Each repo's last successful result is persisted in `localStorage`, so a reload paints immediately from cache and then refreshes in place.
 The UI surfaces the remaining budget and any pause state.
@@ -133,7 +133,7 @@ The UI surfaces the remaining budget and any pause state.
 The *Branches* tab (`views/BranchesView.tsx`) surfaces candidates for deletion: branches with no recent activity, no open PR, and no protection rule.
 
 * *One query per repo* fetches up to 100 branch refs (`refs(refPrefix:"refs/heads/", first:100)`), each with its last commit, author, open-PR count, protection status, and ahead/behind counts against the default branch, in a single round trip.
-* *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the fixed 10-minute sweep cadence leaves headroom across ~157 repos, though less of it than the ~98-repo list left.
+* *Cost*: each query costs roughly 3-6 GraphQL points against GitHub's 5 000 points/h budget, so the hourly sweep cadence leaves comfortable headroom across ~157 repos -- one full branch sweep an hour is under a fifth of the budget.
 * *Exclusions* — a branch is never flagged stale if it is:
 . the repository's default branch,
 . protected (detected via `refUpdateRule`, the signal visible without repo-admin access — `branchProtectionRule` needs admin and would be null for every `apache/*` repo), or
