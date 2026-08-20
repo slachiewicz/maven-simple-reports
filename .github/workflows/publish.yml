@@ -5,9 +5,9 @@ name: Publish
 #   trigger             | SPA build          | deploy target
 #   ----                | ---------          | -------------
 #   push main           | cached (iff web/)  | GitHub Pages
-#   push branch         | cached (iff web/)  | Netlify preview
-#   pull_request        | cached (iff web/)  | Netlify preview
-#   workflow_dispatch   | cached             | Pages (main) / Netlify (branch)
+#   push branch         | cached (iff web/)  | none (build + test only)
+#   pull_request        | cached (iff web/)  | none (build + test only)
+#   workflow_dispatch   | cached             | Pages, on main only
 #
 # The build-spa job always runs but restores web/dist from the Actions
 # cache (key = hash of web/**); it only rebuilds on a cache miss (web/
@@ -26,7 +26,6 @@ permissions:
   contents: read
   pages: write          # deploy to Pages
   id-token: write       # OIDC for actions/deploy-pages
-  pull-requests: write  # Netlify bot PR comment
   actions: read         # artifact discovery via gh api
 
 env:
@@ -39,41 +38,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  context:
-    runs-on: ubuntu-latest
-    outputs:
-      deploy-target: ${{ steps.ctx.outputs.deploy-target }}
-      is-main: ${{ steps.ctx.outputs.is-main }}
-    steps:
-      - name: Resolve deploy target
-        id: ctx
-        run: |
-          set -e
-          EVENT="${{ github.event_name }}"
-          IS_MAIN=false
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            IS_MAIN=true
-          fi
-
-          # Decide where the run deploys.
-          TARGET=none
-          case "$EVENT" in
-            push|workflow_dispatch)
-              if [ "$IS_MAIN" = "true" ]; then
-                TARGET=pages
-              else
-                TARGET=netlify
-              fi
-              ;;
-            pull_request)
-              TARGET=netlify
-              ;;
-          esac
-
-          echo "is-main=$IS_MAIN" >> "$GITHUB_OUTPUT"
-          echo "deploy-target=$TARGET" >> "$GITHUB_OUTPUT"
-          echo "Resolved: target=$TARGET is-main=$IS_MAIN"
-
   test-spa:
     runs-on: ubuntu-latest
     steps:
@@ -141,11 +105,11 @@ jobs:
 
   publish-pages:
     runs-on: ubuntu-latest
-    needs: [context, build-spa]
-    if: |
-      always()
-      && needs.context.outputs.deploy-target == 'pages'
-      && needs.build-spa.result == 'success'
+    needs: build-spa
+    # Pages has a single site, so only main deploys. A branch or PR stops after
+    # test-spa and build-spa, which is the CI check it wanted anyway. On a
+    # pull_request, github.ref is refs/pull/N/merge, so this excludes them too.
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -192,84 +156,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v5
-
-  publish-netlify:
-    runs-on: ubuntu-latest
-    needs: [context, build-spa]
-    if: |
-      always()
-      && needs.context.outputs.deploy-target == 'netlify'
-      && needs.build-spa.result == 'success'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # build-spa always runs. Its cache key is hashFiles('web/**'), so a
-      # preview whose web/ matches main restores main's cached SPA, while a
-      # preview that changed web/ rebuilds its own — no run-walking needed.
-      - name: Download SPA (from this run's build-spa)
-        run: |
-          mkdir -p public/dependabot-prs
-          gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n spa-dist -D public/dependabot-prs/
-          echo "Deployed SPA from this run's build-spa job"
-
-      - name: Restore Maven 4 registry from data branch
-        run: |
-          mkdir -p public data
-          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
-            git fetch origin data --depth=1
-            git show FETCH_HEAD:maven4-registry.json > data/maven4-registry.json 2>/dev/null \
-              && echo "Restored registry ($(wc -c < data/maven4-registry.json) bytes)" \
-              || echo "::warning::No maven4-registry.json on data branch yet"
-          fi
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.x'
-
-      - name: Render Maven 4 adoption report (HTML, from registry)
-        run: |
-          if [ -f data/maven4-registry.json ]; then
-            python scripts/render_registry_report.py data/maven4-registry.json public/maven4-adoption.html
-          else
-            echo "::warning::No registry on data branch — Maven 4 report missing from this preview"
-          fi
-
-      - name: Set Netlify alias
-        id: netlify-alias
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "alias=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          else
-            BRANCH_NAME="${{ github.ref_name }}"
-            SANITIZED=$(echo "$BRANCH_NAME" | sed 's/\//-/g')
-            echo "alias=$SANITIZED" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install Netlify Functions dependencies
-        working-directory: ./netlify
-        run: npm install --no-audit --no-fund
-
-      - name: Deploy to Netlify
-        id: netlify-deploy
-        uses: nwtgck/actions-netlify@v4
-        with:
-          publish-dir: './public'
-          functions-dir: './netlify/functions'
-          production-deploy: false
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          deploy-message: "Preview from GitHub Actions - ${{ github.event.head_commit.message || github.event.pull_request.title }}"
-          enable-pull-request-comment: true
-          enable-commit-comment: false
-          alias: ${{ steps.netlify-alias.outputs.alias }}
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-
-      - name: Display Netlify URL
-        run: |
-          echo "### Netlify Preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "URL: ${{ steps.netlify-deploy.outputs.deploy-url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Alias: \`${{ steps.netlify-alias.outputs.alias }}\`" >> "$GITHUB_STEP_SUMMARY"

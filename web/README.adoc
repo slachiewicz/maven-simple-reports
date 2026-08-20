@@ -157,7 +157,7 @@ npm run build        # outputs to web/dist/
 npm run typecheck    # tsc -b --noEmit
 ----
 
-The repo's top-level `scripts/generate_report.sh` runs `npm ci && npm run build` and copies `web/dist/` into `public/dependabot-prs/` so the existing GitHub Pages / Netlify deploy step picks it up.
+The repo's top-level `scripts/generate_report.sh` runs `npm ci && npm run build` and copies `web/dist/` into `public/dependabot-prs/` so the GitHub Pages deploy step picks it up.
 
 == Tests
 
@@ -228,7 +228,7 @@ netlify/
 
 === Asset base path
 
-Asset URLs are emitted relative (`base: './'` in `vite.config.ts`), so the same build works at any deployment path: GH Pages under `/maven-simple-reports/dependabot-prs/`, Netlify branch deploys under `/dependabot-prs/`, or a local preview at the root.
+Asset URLs are emitted relative (`base: './'` in `vite.config.ts`), so the same build works at any deployment path: GH Pages under `/maven-simple-reports/dependabot-prs/`, a Netlify site under `/dependabot-prs/`, or a local preview at the root.
 Override with `PUBLIC_BASE=/foo/ npm run build` if you need an absolute base.
 
 === OAuth (optional)

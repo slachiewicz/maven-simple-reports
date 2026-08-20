@@ -8,7 +8,7 @@ This is a **supporting project** (not an MCP server) that publishes reports and 
 
 **Key outputs:**
 - A static **single-page dashboard** (`web/`) with two tabs: *Pull requests* (all open PRs, any author, with live build status) and *Branches* (stale-branch detection). Both go through the GitHub GraphQL API and **both require a token**. This replaces the previous Python-generated `dependabot-prs.html`.
-- Reports published to GitHub Pages (main) and Netlify (PRs/branches) on push.
+- Reports published to GitHub Pages from `main`. Branches and PRs build and test but deploy nowhere: Pages has a single site, and a branch deploy would overwrite it.
 
 Further Python-based reports may live under `scripts/` in the future.
 
@@ -50,9 +50,11 @@ The GitHub Actions workflow runs on push, PR, and manual dispatch (Actions → P
 1. **`web/`** — Vite + React + TypeScript SPA. Calls `api.github.com/graphql` directly with serial request scheduling and 403/429 backoff. `lib/useSweep.ts` is the shared polling loop driving both tabs; `lib/githubGraphql.ts` is the only API client. Output: `web/dist/`.
 
    **Both tabs share one `SerialQueue`** (`lib/githubFetch.ts`, exported as `apiQueue`) so they never fire concurrently and a backoff triggered by either pauses both. They also share one 5 000 points/h budget, so that is the correct behaviour rather than a limitation.
-2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh.
+2. **`netlify/functions/`** — three TypeScript Netlify Functions (`auth-callback`, `token-exchange`, `token-refresh`) hosting the OAuth Authorization Code + PKCE flow against a registered GitHub App. They never touch dashboard data, only token exchange / refresh, and are deployed independently of this repo's CI.
 3. **`scripts/generate_report.sh`** — orchestrator. Builds the SPA and copies it into `public/dependabot-prs/`.
-4. **`.github/workflows/publish.yml`** — runs `generate_report.sh`, publishes `public/` to GitHub Pages (main) or Netlify (PRs/branches), and uploads `netlify/functions/` alongside Netlify deploys.
+4. **`.github/workflows/publish.yml`** — builds and tests the SPA on every push and PR, and publishes `public/` to GitHub Pages from `main` only.
+
+   The workflow no longer deploys to Netlify. `netlify/functions/` is still the OAuth backend and still deployed by whoever owns the Netlify site; CI just stopped pushing branch previews there.
 
 ### Directory layout
 
